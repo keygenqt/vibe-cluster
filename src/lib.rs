@@ -1,0 +1,38 @@
+//! vibe-cluster — LLM cluster library.
+//! Manages multiple LLM providers and distributes prompts across them.
+//!
+//! # Quick start
+//!
+//! ```rust,ignore
+//! use vibe_cluster::{Cluster, ConnectionParams, Provider};
+//!
+//! let connections = vec![ConnectionParams {
+//!     provider: Provider::Ollama,
+//!     host: "http://localhost:11434".into(),
+//!     model: "qwen2.5-coder:3b-instruct".into(),
+//!     ..Default::default()
+//! }];
+//!
+//! let cluster = Cluster::new(connections).unwrap();
+//! let result = cluster.call("Explain async/await").await.unwrap();
+//! println!("{}", result.text.unwrap());
+//! ```
+
+mod clients;
+mod cluster;
+mod error;
+mod options;
+mod params;
+mod prompt;
+mod provider;
+mod result;
+mod utils;
+
+pub use cluster::Cluster;
+pub use error::ClusterError;
+pub use options::BatchOptions;
+pub use options::ModelFilter;
+pub use params::ConnectionParams;
+pub use prompt::Prompt;
+pub use provider::Provider;
+pub use result::PromptResult;
