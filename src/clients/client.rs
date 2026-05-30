@@ -32,7 +32,7 @@ pub trait Client: Send + Sync {
     async fn eject(&self) -> Result<(), ClusterError>;
 
     /// Low-level call — sends raw prompt, returns raw text.
-    async fn call(&self, prompt: &str) -> Result<String, reqwest::Error>;
+    async fn call(&self, user: &str, system: Option<&str>) -> Result<String, reqwest::Error>;
 
     /// Executes a prompt with retries, normalization, and error classification.
     async fn execute(&self, prompt: &Prompt, retries: usize) -> Result<PromptResult, ClusterError> {
@@ -40,7 +40,7 @@ pub trait Client: Send + Sync {
         let mut attempts = 0;
 
         loop {
-            let raw = self.call(&prompt.text).await;
+            let raw = self.call(&prompt.user, prompt.system.as_deref()).await;
             attempts += 1;
 
             match raw {

@@ -253,7 +253,7 @@ impl Cluster {
             .iter_mut()
             .map(|r| {
                 r.take().unwrap_or(PromptResult {
-                    prompt: Prompt::new(""),
+                    prompt: Prompt::new("", None),
                     provider: Provider::Ollama,
                     host: String::new(),
                     model: String::new(),

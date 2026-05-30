@@ -3,25 +3,33 @@
 
 #[derive(Debug, Clone)]
 pub struct Prompt {
-    /// The prompt text sent to the model.
-    pub text: String,
+    /// User prompt text.
+    pub user: String,
+    /// Optional system prompt text.
+    pub system: Option<String>,
     /// Optional key for matching response back to source files.
     pub key: Option<String>,
 }
 
 impl Prompt {
-    /// Create a new prompt with just text, no key.
-    pub fn new(text: impl Into<String>) -> Self {
+    /// Create prompt with user text and optional system text.
+    pub fn new(user: impl Into<String>, system: Option<String>) -> Self {
         Self {
-            text: text.into(),
+            user: user.into(),
+            system,
             key: None,
         }
     }
 
-    /// Create a new prompt with text and a matching key.
-    pub fn new_with_key(text: impl Into<String>, key: impl Into<String>) -> Self {
+    /// Create prompt with user text, key, and optional system text.
+    pub fn new_with_key(
+        user: impl Into<String>,
+        key: impl Into<String>,
+        system: Option<String>,
+    ) -> Self {
         Self {
-            text: text.into(),
+            user: user.into(),
+            system,
             key: Some(key.into()),
         }
     }

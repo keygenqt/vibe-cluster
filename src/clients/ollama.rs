@@ -132,11 +132,11 @@ impl Client for OllamaClient {
     }
 
     /// Sends a raw prompt to Ollama /api/generate and returns normalized response text.
-    async fn call(&self, prompt: &str) -> Result<String, reqwest::Error> {
+    async fn call(&self, user: &str, system: Option<&str>) -> Result<String, reqwest::Error> {
         let url = format!("{}/api/generate", self.host);
-        let request = serde_json::json!({
+        let mut request = serde_json::json!({
             "model": self.model,
-            "prompt": prompt,
+            "prompt": user,
             "stream": false,
             "session_id": Uuid::new_v4().to_string(),
             "options": {
@@ -146,6 +146,10 @@ impl Client for OllamaClient {
                 "num_predict": self.num_predict,
             }
         });
+
+        if let Some(system) = system {
+            request["system"] = serde_json::Value::String(system.to_string());
+        }
 
         let response = self
             .client

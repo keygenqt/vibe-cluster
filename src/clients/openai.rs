@@ -78,16 +78,23 @@ impl Client for OpenAiClient {
     }
 
     /// Sends a prompt to the OpenAI-compatible /chat/completions endpoint and returns raw response text.
-    async fn call(&self, prompt: &str) -> Result<String, reqwest::Error> {
+    async fn call(&self, user: &str, system: Option<&str>) -> Result<String, reqwest::Error> {
         let url = format!("{}/chat/completions", self.host);
+        let mut messages = Vec::new();
+        if let Some(system) = system {
+            messages.push(serde_json::json!({
+                "role": "system",
+                "content": system
+            }));
+        }
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": user
+        }));
+
         let request = serde_json::json!({
             "model": self.model,
-            "messages": [
-                {
-                    "role": "user",
-                    "content": prompt,
-                }
-            ],
+            "messages": messages,
             "temperature": self.temperature,
             "seed": self.seed,
             "max_tokens": self.num_predict,
