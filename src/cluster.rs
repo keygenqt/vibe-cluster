@@ -60,6 +60,45 @@ impl Cluster {
         Ok(())
     }
 
+    /// Returns list of unique host URLs in this cluster.
+    pub async fn hosts(&self) -> Vec<String> {
+        let mut result: Vec<String> = Vec::new();
+        for client in &self.clients {
+            let client = client.lock().await;
+            let host = client.host().to_string();
+            if !result.contains(&host) {
+                result.push(host);
+            }
+        }
+        result
+    }
+
+    /// Returns list of unique model names in this cluster.
+    pub async fn models(&self) -> Vec<String> {
+        let mut names: Vec<String> = Vec::new();
+        for client in &self.clients {
+            let client = client.lock().await;
+            let model = client.model_name().to_string();
+            if !names.contains(&model) {
+                names.push(model);
+            }
+        }
+        names
+    }
+
+    /// Returns list of unique provider types in this cluster.
+    pub async fn providers(&self) -> Vec<String> {
+        let mut result: Vec<String> = Vec::new();
+        for client in &self.clients {
+            let client = client.lock().await;
+            let provider = format!("{:?}", client.provider());
+            if !result.contains(&provider) {
+                result.push(provider);
+            }
+        }
+        result
+    }
+
     /// Send a single prompt with default options.
     pub async fn call(&self, prompt: Prompt) -> Result<PromptResult, ClusterError> {
         self.call_with_options(prompt, &BatchOptions::default())
