@@ -21,12 +21,12 @@ pub enum ClusterError {
 impl std::fmt::Display for ClusterError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
         match self {
-            ClusterError::Http(e) => write!(f, "HTTP error: {}", e),
-            ClusterError::Model(e) => write!(f, "Model error: {}", e),
-            ClusterError::Parse(e) => write!(f, "Parse error: {}", e),
-            ClusterError::Unavailable(e) => write!(f, "Provider unavailable: {}", e),
-            ClusterError::Config(e) => write!(f, "Config error: {}", e),
-            ClusterError::AllFailed(e) => write!(f, "All providers failed: {}", e),
+            ClusterError::Http(e) => write!(f, "{}", e),
+            ClusterError::Model(e) => write!(f, "{}", e),
+            ClusterError::Parse(e) => write!(f, "{}", e),
+            ClusterError::Unavailable(e) => write!(f, "{}", e),
+            ClusterError::Config(e) => write!(f, "{}", e),
+            ClusterError::AllFailed(e) => write!(f, "{}", e),
         }
     }
 }

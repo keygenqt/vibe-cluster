@@ -36,3 +36,5 @@ pub use params::ConnectionParams;
 pub use prompt::Prompt;
 pub use provider::Provider;
 pub use result::PromptResult;
+
+pub use utils::normalize_text;

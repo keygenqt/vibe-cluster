@@ -4,7 +4,7 @@ use std::time::{Duration, Instant};
 
 use crate::provider::Provider;
 use crate::result::PromptResult;
-use crate::{ClusterError, Prompt, utils};
+use crate::{ClusterError, Prompt};
 use async_trait::async_trait;
 
 /// Internal client trait — not exposed to library users.
@@ -45,14 +45,13 @@ pub trait Client: Send + Sync {
 
             match raw {
                 Ok(raw_text) => {
-                    let text = utils::normalize_response_text(&raw_text);
                     return Ok(PromptResult {
                         prompt: prompt.clone(),
                         provider: self.provider(),
                         host: self.host().to_string(),
                         model: self.model_name().to_string(),
                         duration_ms: start.elapsed().as_millis() as u64,
-                        text: Some(text),
+                        text: Some(raw_text),
                         error: None,
                     });
                 }

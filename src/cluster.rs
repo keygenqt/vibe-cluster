@@ -166,7 +166,9 @@ impl Cluster {
         active_clients = reachable;
 
         if active_clients.is_empty() {
-            return Err(ClusterError::Config("No matching models available".into()));
+            return Err(ClusterError::Unavailable(
+                "No models are currently available.".into(),
+            ));
         }
 
         // Sort: local models first (Ollama > cloud), then active first within each group

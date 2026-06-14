@@ -1,12 +1,37 @@
 //! Response normalization utilities.
 //! Extract JSON from markdown fences, fix malformed JSON, return text as-is otherwise.
 
-/// Normalize LLM response: extract JSON from markdown, fix malformed JSON, or return text as-is.
-pub fn normalize_response_text(raw: &str) -> String {
+/// Normalize LLM response: strip edge markdown code blocks from text/JSON, fix malformed JSON.
+pub fn normalize_text(raw: &str) -> String {
     let mut content = raw.trim().to_string();
 
-    // Not JSON — return as-is
-    if !content.contains('{') && !content.contains('[') {
+    // Strip leading and trailing markdown code block markers (e.g., ```markdown ... ```)
+    // from plain text responses, ensuring the trailing marker is removed only if the leading one was present.
+    let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
+    let mut has_prefix = false;
+    if let Some(first) = lines.first() {
+        if first.trim_start().starts_with("```") {
+            has_prefix = true;
+        }
+    }
+    if has_prefix {
+        lines.remove(0);
+        if let Some(last) = lines.last() {
+            if last.trim_start().starts_with("```") {
+                lines.pop();
+            }
+        }
+        content = lines.join("\n").trim().to_string();
+    }
+
+    // Return as-is if not JSON/array (avoid unnecessary processing).
+    if !content.starts_with('[')
+        && !content.starts_with('{')
+        && !content.starts_with("```[")
+        && !content.starts_with("```{")
+        && !content.starts_with("```\n[")
+        && !content.starts_with("```\n{")
+    {
         return content;
     }
 
@@ -39,11 +64,11 @@ pub fn normalize_response_text(raw: &str) -> String {
     let mut json = json;
 
     // Fix unquoted keys: `key:` → `"key":`
-    let key_re = regex::Regex::new(r"(?m)^(\s*)([a-zA-Z_][a-zA-Z0-9_]*)(\s*:)").unwrap();
+    let key_re = regex::Regex::new(r"(?m)^(*)([a-zA-Z_][a-zA-Z0-9_]*)(*:)").unwrap();
     json = key_re.replace_all(&json, r#"$1"$2"$3"#).to_string();
 
     // Fix comma-before-closing: `,}` or `,]`
-    let comma_re = regex::Regex::new(r",(\s*[\]}])").unwrap();
+    let comma_re = regex::Regex::new(r",(*[\]}])").unwrap();
     json = comma_re.replace_all(&json, r#"$1"#).to_string();
 
     // Balance braces and brackets
