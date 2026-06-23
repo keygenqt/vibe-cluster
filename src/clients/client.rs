@@ -28,11 +28,14 @@ pub trait Client: Send + Sync {
     /// Check if the model is currently processing another request.
     async fn is_busy(&self) -> Result<bool, ClusterError>;
 
+    /// Checks if the model supports vision (image input).
+    async fn is_vision(&self) -> Result<bool, ClusterError>;
+
     /// Unload the model from memory (free VRAM).
     async fn eject(&self) -> Result<(), ClusterError>;
 
     /// Low-level call — sends raw prompt, returns raw text.
-    async fn call(&self, user: &str, system: Option<&str>) -> Result<String, reqwest::Error>;
+    async fn call(&self, prompt: &Prompt) -> Result<(String, String), ClusterError>;
 
     /// Executes a prompt with retries, normalization, and error classification.
     async fn execute(&self, prompt: &Prompt, retries: usize) -> Result<PromptResult, ClusterError> {
@@ -40,57 +43,68 @@ pub trait Client: Send + Sync {
         let mut attempts = 0;
 
         loop {
-            let raw = self.call(&prompt.user, prompt.system.as_deref()).await;
+            let raw = self.call(prompt).await;
             attempts += 1;
 
             match raw {
-                Ok(raw_text) => {
+                Ok((thinking_text, response_text)) => {
                     return Ok(PromptResult {
                         prompt: prompt.clone(),
                         provider: self.provider(),
                         host: self.host().to_string(),
                         model: self.model_name().to_string(),
                         duration_ms: start.elapsed().as_millis() as u64,
-                        text: Some(raw_text),
+                        thinking: if thinking_text.is_empty() {
+                            None
+                        } else {
+                            Some(thinking_text)
+                        },
+                        text: Some(response_text),
                         error: None,
                     });
                 }
                 Err(e) => {
-                    if e.is_timeout() && attempts < retries {
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                        continue;
-                    }
-                    if e.is_connect() && attempts < retries {
-                        tokio::time::sleep(Duration::from_millis(500)).await;
-                        continue;
-                    }
-                    if let Some(status) = e.status() {
-                        if status.is_server_error() && attempts < retries {
+                    // Handle standard transport and HTTP network errors if applicable
+                    if let ClusterError::Http(ref reqwest_err) = e {
+                        if reqwest_err.is_timeout() && attempts < retries {
                             tokio::time::sleep(Duration::from_millis(500)).await;
                             continue;
                         }
-                        return Ok(PromptResult {
-                            prompt: prompt.clone(),
-                            provider: self.provider(),
-                            host: self.host().to_string(),
-                            model: self.model_name().to_string(),
-                            duration_ms: start.elapsed().as_millis() as u64,
-                            text: None,
-                            error: Some(ClusterError::Model(format!(
-                                "HTTP {}: {}",
-                                status.as_u16(),
-                                e
-                            ))),
-                        });
+                        if reqwest_err.is_connect() && attempts < retries {
+                            tokio::time::sleep(Duration::from_millis(500)).await;
+                            continue;
+                        }
+
+                        if let Some(status) = reqwest_err.status() {
+                            if status.is_server_error() && attempts < retries {
+                                tokio::time::sleep(Duration::from_millis(500)).await;
+                                continue;
+                            }
+                            return Ok(PromptResult {
+                                prompt: prompt.clone(),
+                                provider: self.provider(),
+                                host: self.host().to_string(),
+                                model: self.model_name().to_string(),
+                                duration_ms: start.elapsed().as_millis() as u64,
+                                thinking: None,
+                                text: None,
+                                error: Some(ClusterError::Model(format!(
+                                    "HTTP {}: {}",
+                                    status.as_u16(),
+                                    reqwest_err
+                                ))),
+                            });
+                        }
                     }
+
+                    // Retry loop fallback for remaining attempts before total exhaustion
                     if attempts < retries {
                         tokio::time::sleep(Duration::from_millis(500)).await;
                         continue;
                     }
-                    return Err(ClusterError::Http(format!(
-                        "Request failed after {} attempts: {}",
-                        attempts, e
-                    )));
+
+                    // Return the structured cluster error directly without temporary allocations
+                    return Err(e);
                 }
             }
         }

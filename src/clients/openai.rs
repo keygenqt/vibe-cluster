@@ -6,6 +6,7 @@ use std::time::Duration;
 use async_trait::async_trait;
 use reqwest::Client as HttpClient;
 
+use crate::Prompt;
 use crate::clients::client::Client;
 use crate::error::ClusterError;
 use crate::params::ConnectionParams;
@@ -45,21 +46,18 @@ impl Client for OpenAiClient {
     /// Checks if the cloud API is reachable via /models endpoint.
     async fn is_available(&self) -> Result<bool, ClusterError> {
         let url = format!("{}/models", self.host);
-        match self
+
+        // Network errors are automatically transformed into ClusterError::Http via ? operator
+        let response = self
             .client
             .get(&url)
             .header("Authorization", format!("Bearer {}", self.api_key))
             .timeout(Duration::from_secs(5))
             .send()
-            .await
-        {
-            Ok(r) => Ok(r.status().is_success()),
-            Err(e) => Err(ClusterError::Http(format!(
-                "{:?} unavailable: {}",
-                self.provider(),
-                e
-            ))),
-        }
+            .await?;
+
+        // Return true if the cloud server responded with a successful status code
+        Ok(response.status().is_success())
     }
 
     /// Cloud models are always active (no loading/unloading).
@@ -72,25 +70,58 @@ impl Client for OpenAiClient {
         Ok(false)
     }
 
+    /// Checks if the model supports vision (image input) via API, with name pattern fallback.
+    async fn is_vision(&self) -> Result<bool, ClusterError> {
+        let url = format!("{}/models/{}", self.host, self.model);
+        // Try API first
+        if let Ok(r) = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await
+        {
+            if let Ok(json) = r.json::<serde_json::Value>().await {
+                if let Some(modalities) = json["modalities"].as_array() {
+                    return Ok(modalities.iter().any(|v| v.as_str() == Some("image")));
+                }
+            }
+        }
+        // Fallback to name pattern
+        let name = self.model.to_lowercase();
+        Ok(name.contains("vl") || name.contains("vision") || name.contains("gpt-4o"))
+    }
+
     /// Cloud models cannot be ejected (always available).
     async fn eject(&self) -> Result<(), ClusterError> {
         Ok(())
     }
 
     /// Sends a prompt to the OpenAI-compatible /chat/completions endpoint and returns raw response text.
-    async fn call(&self, user: &str, system: Option<&str>) -> Result<String, reqwest::Error> {
+    async fn call(&self, prompt: &Prompt) -> Result<(String, String), ClusterError> {
         let url = format!("{}/chat/completions", self.host);
         let mut messages = Vec::new();
-        if let Some(system) = system {
-            messages.push(serde_json::json!({
-                "role": "system",
-                "content": system
-            }));
+
+        if let Some(system) = &prompt.system {
+            messages.push(serde_json::json!({ "role": "system", "content": system }));
         }
-        messages.push(serde_json::json!({
-            "role": "user",
-            "content": user
-        }));
+
+        let user_content = if let Some(images) = &prompt.images {
+            let mut content: Vec<serde_json::Value> =
+                vec![serde_json::json!({"type": "text", "text": prompt.user})];
+            for img in images {
+                content.push(serde_json::json!({
+                    "type": "image_url",
+                    "image_url": {"url": format!("data:image/png;base64,{}", img)}
+                }));
+            }
+            serde_json::Value::Array(content)
+        } else {
+            serde_json::Value::String(prompt.user.clone())
+        };
+
+        messages.push(serde_json::json!({ "role": "user", "content": user_content }));
 
         let request = serde_json::json!({
             "model": self.model,
@@ -101,6 +132,7 @@ impl Client for OpenAiClient {
             "stream": false,
         });
 
+        // Transport and HTTP error codes are automatically transformed into ClusterError::Http via ?
         let response = self
             .client
             .post(&url)
@@ -111,17 +143,35 @@ impl Client for OpenAiClient {
             .send()
             .await?;
 
+        let response = response.error_for_status()?;
         let json: serde_json::Value = response.json().await?;
-        let raw = json["choices"][0]["message"]["content"]
+
+        // Safe extraction of the first message node using options to prevent runtime panics
+        let message_node = json["choices"]
+            .get(0)
+            .and_then(|choice| choice.get("message"))
+            .ok_or_else(|| {
+                ClusterError::Parse("OpenAI response misses choices or message node".into())
+            })?;
+
+        // Extract reasoning/thinking log if available (e.g. from DeepSeek-R1 or OpenAI o1/o3)
+        let thinking = message_node["reasoning_content"]
             .as_str()
+            .or_else(|| message_node["reasoning"].as_str())
             .unwrap_or("");
 
+        // Extract core content text
+        let mut raw = message_node["content"].as_str().unwrap_or("").to_string();
+
+        // Fallback for vLLM/Ollama OpenAI-compatible response structures
         if raw.is_empty() {
             let alt = json["response"].as_str().unwrap_or("");
-            return Ok(alt.to_string());
+            if !alt.is_empty() {
+                raw = alt.to_string();
+            }
         }
 
-        Ok(raw.to_string())
+        Ok((thinking.to_string(), raw))
     }
 }
 

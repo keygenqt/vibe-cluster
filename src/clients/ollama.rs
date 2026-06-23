@@ -7,6 +7,7 @@ use async_trait::async_trait;
 use reqwest::Client as HttpClient;
 use uuid::Uuid;
 
+use crate::Prompt;
 use crate::clients::client::Client;
 use crate::error::ClusterError;
 use crate::params::ConnectionParams;
@@ -45,16 +46,17 @@ impl Client for OllamaClient {
     /// Checks if Ollama server is reachable via /api/tags endpoint.
     async fn is_available(&self) -> Result<bool, ClusterError> {
         let url = format!("{}/api/tags", self.host);
-        match self
+
+        // Network errors are automatically transformed into ClusterError::Http via ? operator
+        let response = self
             .client
             .get(&url)
             .timeout(Duration::from_secs(5))
             .send()
-            .await
-        {
-            Ok(r) => Ok(r.status().is_success()),
-            Err(e) => Err(ClusterError::Http(format!("Ollama unavailable: {}", e))),
-        }
+            .await?;
+
+        // Return true if the server responded with a successful status code
+        Ok(response.status().is_success())
     }
 
     /// Checks if the model is loaded in Ollama memory via /api/show.
@@ -81,29 +83,84 @@ impl Client for OllamaClient {
     /// Checks if the model is currently processing a request via /api/ps.
     async fn is_busy(&self) -> Result<bool, ClusterError> {
         let url = format!("{}/api/ps", self.host);
-        match self
+
+        // Network errors are automatically transformed into ClusterError::Http via ? operator
+        let response = self
             .client
             .get(&url)
             .timeout(Duration::from_secs(5))
             .send()
-            .await
-        {
-            Ok(r) => {
-                let json = r.json::<serde_json::Value>().await.map_err(|e| {
-                    ClusterError::Parse(format!("Ollama /api/ps parse error: {}", e))
-                })?;
-                if let Some(models) = json["models"].as_array() {
-                    return Ok(models
-                        .iter()
-                        .any(|m| m["name"].as_str() == Some(&self.model)));
-                }
-                Ok(false)
-            }
-            Err(e) => Err(ClusterError::Http(format!(
-                "Ollama is_busy check failed: {}",
-                e
-            ))),
+            .await?;
+
+        // Check for HTTP success status before parsing the response body
+        if !response.status().is_success() {
+            return Err(ClusterError::Model(format!(
+                "Ollama /api/ps returned status: {}",
+                response.status()
+            )));
         }
+
+        // Parse JSON safely using implemented transformation traits
+        let json: serde_json::Value = response.json().await?;
+
+        // Check if the current model is present in the active models list
+        if let Some(models) = json["models"].as_array() {
+            let is_running = models
+                .iter()
+                .any(|m| m["name"].as_str() == Some(&self.model));
+            return Ok(is_running);
+        }
+
+        Ok(false)
+    }
+
+    /// Checks if the model supports vision (image input) via /api/show.
+    async fn is_vision(&self) -> Result<bool, ClusterError> {
+        let url = format!("{}/api/show", self.host);
+        let request = serde_json::json!({ "name": self.model });
+
+        // Network errors are automatically transformed into ClusterError::Http via ? operator
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await?;
+
+        // Check for HTTP success status before parsing the response body
+        if !response.status().is_success() {
+            return Err(ClusterError::Model(format!(
+                "Ollama /api/show returned status: {}",
+                response.status()
+            )));
+        }
+
+        // Parse JSON safely using implemented transformation traits
+        let json: serde_json::Value = response.json().await?;
+
+        // Check modern capabilities array for explicit vision support
+        let capabilities = json["capabilities"].as_array();
+        let is_vision_capable = capabilities
+            .map(|c| c.iter().any(|v| v.as_str() == Some("vision")))
+            .unwrap_or(false);
+
+        if is_vision_capable {
+            return Ok(true);
+        }
+
+        // Fallback for older Ollama versions using family and projector metadata
+        let families = json["details"]["families"].as_array();
+        let has_clip = families
+            .map(|f| {
+                f.iter()
+                    .any(|v| v.as_str() == Some("clip") || v.as_str() == Some("qwen3vl"))
+            })
+            .unwrap_or(false);
+
+        let has_projector = json["details"]["projector_info"].is_object();
+
+        Ok(has_clip || has_projector)
     }
 
     /// Unloads the model from Ollama memory via /api/generate with keep_alive=0.
@@ -114,29 +171,36 @@ impl Client for OllamaClient {
             "prompt": "",
             "keep_alive": 0,
         });
-        match self
+
+        // Operator ? automatically transforms transport errors into ClusterError::Http
+        let response = self
             .client
             .post(&url)
             .json(&request)
             .timeout(Duration::from_secs(5))
             .send()
-            .await
-        {
-            Ok(r) if r.status().is_success() => Ok(()),
-            Ok(r) => Err(ClusterError::Model(format!(
+            .await?;
+
+        // Check status code strictly using the same logic as other clients
+        if !response.status().is_success() {
+            return Err(ClusterError::Model(format!(
                 "Ollama eject returned status: {}",
-                r.status()
-            ))),
-            Err(e) => Err(ClusterError::Http(format!("Ollama eject failed: {}", e))),
+                response.status()
+            )));
         }
+
+        // Explicitly consume bytes to free up the HTTP connection pool safely
+        let _ = response.bytes().await?;
+
+        Ok(())
     }
 
     /// Sends a raw prompt to Ollama /api/generate and returns normalized response text.
-    async fn call(&self, user: &str, system: Option<&str>) -> Result<String, reqwest::Error> {
+    async fn call(&self, prompt: &Prompt) -> Result<(String, String), ClusterError> {
         let url = format!("{}/api/generate", self.host);
         let mut request = serde_json::json!({
             "model": self.model,
-            "prompt": user,
+            "prompt": prompt.user,
             "stream": false,
             "session_id": Uuid::new_v4().to_string(),
             "options": {
@@ -147,8 +211,12 @@ impl Client for OllamaClient {
             }
         });
 
-        if let Some(system) = system {
+        if let Some(system) = &prompt.system {
             request["system"] = serde_json::Value::String(system.to_string());
+        }
+
+        if let Some(images) = &prompt.images {
+            request["images"] = serde_json::to_value(images).unwrap_or_default();
         }
 
         let response = self
@@ -159,9 +227,43 @@ impl Client for OllamaClient {
             .send()
             .await?;
 
-        let json: serde_json::Value = response.json().await?;
-        let raw = json["response"].as_str().unwrap_or("");
-        Ok(raw.to_string())
+        let body_text = response.text().await?;
+        let mut full_response = String::new();
+        let mut thinking_response = String::new();
+        let mut hit_token_limit = false;
+
+        // Use stream deserializer to process the entire response body block
+        let stream =
+            serde_json::Deserializer::from_str(&body_text).into_iter::<serde_json::Value>();
+
+        for value in stream {
+            if let Ok(json_chunk) = value {
+                if let Some(reason) = json_chunk["done_reason"].as_str() {
+                    if reason == "length" {
+                        hit_token_limit = true;
+                    }
+                }
+                if let Some(thinking_text) = json_chunk["thinking"].as_str() {
+                    thinking_response.push_str(thinking_text);
+                }
+                if let Some(chunk_text) = json_chunk["response"].as_str() {
+                    full_response.push_str(chunk_text);
+                }
+            }
+        }
+
+        if hit_token_limit && full_response.is_empty() {
+            return Err(ClusterError::TokenLimitExceeded(format!(
+                "Model '{}' hit output token limit (num_predict: {}).",
+                self.model, self.num_predict
+            )));
+        }
+
+        if full_response.is_empty() && !body_text.contains("\"response\":\"\"") {
+            full_response = body_text;
+        }
+
+        Ok((thinking_response, full_response))
     }
 }
 

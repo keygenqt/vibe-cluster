@@ -49,7 +49,7 @@ fn test_config_two_models() -> Vec<ConnectionParams> {
 async fn test_single_call() {
     let cluster = Cluster::new(test_config()).unwrap();
     let result = cluster
-        .call(Prompt::new("Reply with just: ok", None))
+        .call(Prompt::new("Reply with just: ok", None, None))
         .await
         .unwrap();
     assert!(result.error.is_none());
@@ -60,9 +60,9 @@ async fn test_single_call() {
 async fn test_batch_call_returns_in_order() {
     let cluster = Cluster::new(test_config()).unwrap();
     let prompts: Vec<Prompt> = vec![
-        Prompt::new("Reply with just: one", None),
-        Prompt::new("Reply with just: two", None),
-        Prompt::new("Reply with just: three", None),
+        Prompt::new("Reply with just: one", None, None),
+        Prompt::new("Reply with just: two", None, None),
+        Prompt::new("Reply with just: three", None, None),
     ];
     let results = cluster.batch_call(&prompts, |_, _, _| {}).await.unwrap();
 
@@ -79,7 +79,7 @@ async fn test_batch_call_returns_in_order() {
 async fn test_batch_call_parallel() {
     let cluster = Cluster::new(test_config_two_models()).unwrap();
     let prompts: Vec<Prompt> = (0..6)
-        .map(|i| Prompt::new(format!("Reply with just: {}", i), None))
+        .map(|i| Prompt::new(format!("Reply with just: {}", i), None, None))
         .collect();
     let results = cluster.batch_call(&prompts, |_, _, _| {}).await.unwrap();
 
@@ -97,7 +97,7 @@ async fn test_local_only_filter() {
         ..Default::default()
     };
     let result = cluster
-        .call_with_options(Prompt::new("Reply with just: local", None), &options)
+        .call_with_options(Prompt::new("Reply with just: local", None, None), &options)
         .await
         .unwrap();
     assert!(result.error.is_none());
@@ -112,7 +112,7 @@ async fn test_cloud_only_filter_no_match() {
         ..Default::default()
     };
     let result = cluster
-        .call_with_options(Prompt::new("Reply with just: test", None), &options)
+        .call_with_options(Prompt::new("Reply with just: test", None, None), &options)
         .await;
     assert!(result.is_err());
 }
@@ -125,7 +125,10 @@ async fn test_exclusive_mode() {
         ..Default::default()
     };
     let result = cluster
-        .call_with_options(Prompt::new("Reply with just: exclusive", None), &options)
+        .call_with_options(
+            Prompt::new("Reply with just: exclusive", None, None),
+            &options,
+        )
         .await
         .unwrap();
     assert!(result.error.is_none());
@@ -136,9 +139,9 @@ async fn test_exclusive_mode() {
 async fn test_progress_callback() {
     let cluster = Cluster::new(test_config()).unwrap();
     let prompts: Vec<Prompt> = vec![
-        Prompt::new("Reply with just: a", None),
-        Prompt::new("Reply with just: b", None),
-        Prompt::new("Reply with just: c", None),
+        Prompt::new("Reply with just: a", None, None),
+        Prompt::new("Reply with just: b", None, None),
+        Prompt::new("Reply with just: c", None, None),
     ];
 
     cluster
@@ -179,6 +182,6 @@ async fn test_unreachable_host() {
         ..Default::default()
     }];
     let cluster = Cluster::new(config).unwrap();
-    let result = cluster.call(Prompt::new("test", None)).await;
+    let result = cluster.call(Prompt::new("test", None, None)).await;
     assert!(result.is_err());
 }

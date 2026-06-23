@@ -8,13 +8,16 @@ pub fn normalize_text(raw: &str) -> String {
     // Strip leading and trailing markdown code block markers (e.g., ```markdown ... ```)
     // from plain text responses, ensuring the trailing marker is removed only if the leading one was present.
     let mut lines: Vec<String> = content.lines().map(|s| s.to_string()).collect();
-    let mut has_prefix = false;
+    let mut has_markdown_prefix = false;
+
     if let Some(first) = lines.first() {
-        if first.trim_start().starts_with("```") {
-            has_prefix = true;
+        let trimmed = first.trim_start();
+        if trimmed.starts_with("```markdown") || trimmed == "```md" {
+            has_markdown_prefix = true;
         }
     }
-    if has_prefix {
+
+    if has_markdown_prefix {
         lines.remove(0);
         if let Some(last) = lines.last() {
             if last.trim_start().starts_with("```") {
@@ -24,7 +27,10 @@ pub fn normalize_text(raw: &str) -> String {
         content = lines.join("\n").trim().to_string();
     }
 
-    // Return as-is if not JSON/array (avoid unnecessary processing).
+    if !content.contains('{') && !content.contains('[') {
+        return content;
+    }
+
     if !content.starts_with('[')
         && !content.starts_with('{')
         && !content.starts_with("```[")
@@ -35,7 +41,7 @@ pub fn normalize_text(raw: &str) -> String {
         return content;
     }
 
-    // Extract content from markdown code block
+    // Extract content from markdown code block (Only processed if it actually contains a JSON string inside)
     if let Some(start_md) = content.find("```") {
         let after_start = &content[start_md + 3..];
         let body_start = after_start.find('\n').map(|i| i + 1).unwrap_or(0);
@@ -53,6 +59,7 @@ pub fn normalize_text(raw: &str) -> String {
         .rfind(|c: char| c == '}' || c == ']')
         .map(|i| i + 1)
         .unwrap_or(content.len());
+
     let json = content[start..end].trim().to_string();
 
     // Try to parse as-is first
@@ -64,11 +71,11 @@ pub fn normalize_text(raw: &str) -> String {
     let mut json = json;
 
     // Fix unquoted keys: `key:` → `"key":`
-    let key_re = regex::Regex::new(r"(?m)^(*)([a-zA-Z_][a-zA-Z0-9_]*)(*:)").unwrap();
+    let key_re = regex::Regex::new(r"(?m)^(\s*)([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*)(:)").unwrap();
     json = key_re.replace_all(&json, r#"$1"$2"$3"#).to_string();
 
     // Fix comma-before-closing: `,}` or `,]`
-    let comma_re = regex::Regex::new(r",(*[\]}])").unwrap();
+    let comma_re = regex::Regex::new(r",(\s*[\]}])").unwrap();
     json = comma_re.replace_all(&json, r#"$1"#).to_string();
 
     // Balance braces and brackets
@@ -83,6 +90,7 @@ pub fn normalize_text(raw: &str) -> String {
             _ => {}
         }
     }
+
     if braces > 0 {
         json.push_str(&"}".repeat(braces as usize));
     }

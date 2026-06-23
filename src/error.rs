@@ -1,10 +1,10 @@
 //! Error types for vibe-cluster operations.
 
 /// Errors that can occur during model operations.
-#[derive(Debug, Clone)]
+#[derive(Debug)]
 pub enum ClusterError {
     /// HTTP transport error (connection, timeout).
-    Http(String),
+    Http(reqwest::Error),
     /// Model returned an error response.
     Model(String),
     /// Failed to parse model response.
@@ -15,6 +15,10 @@ pub enum ClusterError {
     Config(String),
     /// All providers failed.
     AllFailed(String),
+    /// Model does not support vision (images passed to non-vision model).
+    VisionNotSupported(String),
+    /// Model exhausted its output token limits before completing response.
+    TokenLimitExceeded(String),
 }
 
 /// Human-readable error messages for cluster operations.
@@ -27,6 +31,8 @@ impl std::fmt::Display for ClusterError {
             ClusterError::Unavailable(e) => write!(f, "{}", e),
             ClusterError::Config(e) => write!(f, "{}", e),
             ClusterError::AllFailed(e) => write!(f, "{}", e),
+            ClusterError::VisionNotSupported(e) => write!(f, "{}", e),
+            ClusterError::TokenLimitExceeded(e) => write!(f, "{}", e),
         }
     }
 }
@@ -41,7 +47,7 @@ impl std::error::Error for ClusterError {
 /// Converts reqwest HTTP errors into ClusterError::Http.
 impl From<reqwest::Error> for ClusterError {
     fn from(e: reqwest::Error) -> Self {
-        ClusterError::Http(e.to_string())
+        ClusterError::Http(e)
     }
 }
 

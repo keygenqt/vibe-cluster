@@ -14,12 +14,14 @@ One API, multiple providers, zero coordination overhead.
 
 - Distributes prompts across multiple LLM providers (local and cloud)
 - Supports Ollama and OpenAI-compatible APIs (DeepSeek, Qwen)
+- Vision model support — route image prompts to vision-capable models
 - Parallel execution with automatic worker distribution
 - Per-prompt results with provider info, timing, and error details
 - Automatic retry on network errors and server failures (5xx)
 - Model filtering: local only, cloud only, or specific models by name
 - Exclusive mode: eject and reload model between prompts for clean context
 - Smart worker selection: local models first, loaded models first
+- Vision-aware routing — automatically filters clients when prompts contain images
 - Batch call with progress reporting
 - Response-to-prompt matching via optional keys
 
@@ -28,6 +30,8 @@ One API, multiple providers, zero coordination overhead.
 **Local LLM cluster.** Run models on multiple GPUs or machines. vibe-cluster distributes prompts and collects results. One API call instead of manual HTTP requests.
 
 **Hybrid inference.** Combine local Ollama for fast drafts with cloud models for complex work. Filter by provider: `ModelFilter::LocalOnly` or `ModelFilter::CloudOnly`.
+
+**Vision pipelines.** Send screenshots and images to vision models (minicpm-v, llava). Cluster automatically routes to vision-capable nodes.
 
 **AI tooling.** Power code analysis pipelines, enrichment workers, and batch processing. Feed prompts in bulk, get structured results back.
 
@@ -63,6 +67,14 @@ println!("{}", result.text.unwrap());
 // Prompt with key for response matching
 let prompt = Prompt::new_with_key("Analyze this code", "src/main.rs");
 
+// Prompt with images for vision models
+let prompt = Prompt {
+    user: "Describe this image".into(),
+    system: None,
+    key: None,
+    images: Some(vec!["iVBORw0KGgo...".into()]),
+};
+
 // Single prompt with custom options
 let options = BatchOptions {
     models: ModelFilter::LocalOnly,
@@ -90,11 +102,11 @@ let results = cluster
 
 ## Supported providers
 
-| Provider | Type  | API                     |
-| -------- | ----- | ----------------------- |
-| Ollama   | Local | Native `/api/generate`  |
-| DeepSeek | Cloud | OpenAI-compatible `/v1` |
-| Qwen     | Cloud | OpenAI-compatible `/v1` |
+| Provider | Type  | API                     | Vision |
+| -------- | ----- | ----------------------- | ------ |
+| Ollama   | Local | Native `/api/generate`  | ✓      |
+| DeepSeek | Cloud | OpenAI-compatible `/v1` | -      |
+| Qwen     | Cloud | OpenAI-compatible `/v1` | ✓      |
 
 ---
 

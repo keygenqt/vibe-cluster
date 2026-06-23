@@ -148,50 +148,21 @@ impl Cluster {
             return Ok(Vec::new());
         }
 
-        // Filter clients by options
-        let mut active_clients: Vec<_> = self
-            .clients
-            .iter()
-            .filter(|c| options.matches_client(c))
-            .cloned()
-            .collect();
-
-        // Exclude clients with unreachable servers
-        let mut reachable = Vec::new();
-        for client in &active_clients {
-            if client.lock().await.is_available().await.is_ok_and(|v| v) {
-                reachable.push(client.clone());
-            }
-        }
-        active_clients = reachable;
-
-        if active_clients.is_empty() {
-            return Err(ClusterError::Unavailable(
-                "No models are currently available.".into(),
-            ));
-        }
-
-        // Sort: local models first (Ollama > cloud), then active first within each group
-        let mut with_meta: Vec<(_, bool, bool)> = Vec::new();
-        for client in &active_clients {
-            let guard = client.lock().await;
-            let is_local = guard.provider() == Provider::Ollama;
-            let is_active = guard.is_active().await.unwrap_or(false);
-            with_meta.push((client.clone(), is_local, is_active));
-        }
-        with_meta.sort_by(|a, b| {
-            b.1.cmp(&a.1) // local first (Ollama > cloud)
-                .then(b.2.cmp(&a.2)) // active first within same type
-        });
-        active_clients = with_meta.into_iter().map(|(c, _, _)| c).collect();
+        // Prepare, filter, and prioritize available cluster nodes before execution
+        let active_clients = self.prepare_clients(prompts, options).await?;
 
         let total = prompts.len();
-        let results = Arc::new(Mutex::new(vec![Option::<PromptResult>::None; total]));
+
+        // Initialize the shared thread-safe buffer with lazy None values
+        // using resize_with to avoid requiring the Clone trait on PromptResult.
+        let mut vec_buffer = Vec::with_capacity(total);
+        vec_buffer.resize_with(total, || None);
+        let results = Arc::new(Mutex::new(vec_buffer));
+
         let next_index = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
         let prompts = Arc::new(prompts.to_vec());
         let on_progress = Arc::new(on_progress);
-
         let mut handles = Vec::new();
 
         for client in active_clients {
@@ -209,9 +180,9 @@ impl Cluster {
                     if idx >= total {
                         break;
                     }
-
                     let prompt = &prompts[idx];
 
+                    // Extract static metadata upfront to ensure it's available for error reports
                     let (provider, model_name, host) = {
                         let guard = client_arc.lock().await;
                         (
@@ -226,29 +197,29 @@ impl Cluster {
                             let guard = client_arc.lock().await;
                             guard.eject().await
                         };
-
                         if let Err(e) = eject_res {
                             PromptResult {
                                 prompt: prompt.clone(),
                                 provider,
-                                host: host,
-                                model: model_name,
+                                host: host.clone(),
+                                model: model_name.clone(),
                                 duration_ms: 0,
+                                thinking: None,
                                 text: None,
                                 error: Some(e),
                             }
                         } else {
                             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
-
                             let guard = client_arc.lock().await;
                             match guard.execute(prompt, options.retries.unwrap_or(1)).await {
                                 Ok(r) => r,
                                 Err(e) => PromptResult {
                                     prompt: prompt.clone(),
                                     provider,
-                                    host: host,
-                                    model: model_name,
+                                    host: host.clone(),
+                                    model: model_name.clone(),
                                     duration_ms: 0,
+                                    thinking: None,
                                     text: None,
                                     error: Some(e),
                                 },
@@ -261,28 +232,31 @@ impl Cluster {
                             Err(e) => PromptResult {
                                 prompt: prompt.clone(),
                                 provider,
-                                host: host,
-                                model: model_name,
+                                host: host.clone(),
+                                model: model_name.clone(),
                                 duration_ms: 0,
+                                thinking: None,
                                 text: None,
                                 error: Some(e),
                             },
                         }
                     };
 
-                    {
-                        let mut res_guard = results.lock().await;
-                        res_guard[idx] = Some(result.clone());
-                    }
-
+                    // Trigger progress callback using a clean borrow before moving ownership
                     let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     on_progress(&result, done, total);
+
+                    // Transfer ownership of the result directly into the shared buffer without cloning
+                    {
+                        let mut res_guard = results.lock().await;
+                        res_guard[idx] = Some(result);
+                    }
                 }
             });
-
             handles.push(handle);
         }
 
+        // Wait for all worker handles to complete and propagate thread panics immediately
         for handle in handles {
             handle
                 .await
@@ -290,23 +264,101 @@ impl Cluster {
         }
 
         let mut final_guard = results.lock().await;
-        let results: Vec<PromptResult> = final_guard
-            .iter_mut()
-            .map(|r| {
-                r.take().unwrap_or(PromptResult {
-                    prompt: Prompt::new("", None),
-                    provider: Provider::Ollama,
-                    host: String::new(),
-                    model: String::new(),
-                    duration_ms: 0,
-                    text: None,
-                    error: Some(ClusterError::AllFailed(
-                        "No worker picked up this prompt".into(),
-                    )),
-                })
-            })
+        let mut final_results = Vec::with_capacity(total);
+
+        // Fail-fast verification to catch critical thread execution drops or panics
+        for (idx, r) in final_guard.iter_mut().enumerate() {
+            if let Some(res) = r.take() {
+                final_results.push(res);
+            } else {
+                return Err(ClusterError::AllFailed(format!(
+                    "Fatal system error: Worker thread panicked, died, or dropped task at index {} prematurely.",
+                    idx
+                )));
+            }
+        }
+
+        Ok(final_results)
+    }
+
+    /// Filters and sorts clients: reachable, local-first, active-first, vision-filtered.
+    async fn prepare_clients(
+        &self,
+        prompts: &[Prompt],
+        options: &BatchOptions,
+    ) -> Result<Vec<Arc<Mutex<Box<dyn Client>>>>, ClusterError> {
+        // Filter the initial client list based on options
+        let active_clients: Vec<_> = self
+            .clients
+            .iter()
+            .filter(|c| options.matches_client(c))
+            .cloned()
             .collect();
 
-        Ok(results)
+        // Check availability in parallel to avoid sequential network bottlenecks
+        let mut tasks = Vec::new();
+        for client in &active_clients {
+            let client_clone = client.clone();
+            tasks.push(tokio::spawn(async move {
+                let has_access = client_clone
+                    .lock()
+                    .await
+                    .is_available()
+                    .await
+                    .is_ok_and(|v| v);
+                if has_access { Some(client_clone) } else { None }
+            }));
+        }
+
+        // Collect parallel task results matching the exact source collection type
+        let mut reachable = Vec::new();
+        for task in futures::future::join_all(tasks).await {
+            if let Ok(Some(client)) = task {
+                reachable.push(client);
+            }
+        }
+        let mut active_clients = reachable;
+
+        if active_clients.is_empty() {
+            return Err(ClusterError::Unavailable(
+                "No models are currently available.".into(),
+            ));
+        }
+
+        // Gather metadata safely while minimizing mutex lock guard lifetime
+        let mut with_meta: Vec<(_, bool, bool)> = Vec::new();
+        for client in &active_clients {
+            let (is_local, is_active) = {
+                let guard = client.lock().await;
+                let local = guard.provider() == Provider::Ollama;
+                (local, guard.is_active().await.unwrap_or(false))
+            };
+            with_meta.push((client.clone(), is_local, is_active));
+        }
+
+        // Sort clients: local models first (Ollama), then active ones within the same group
+        with_meta.sort_by(|a, b| b.1.cmp(&a.1).then(b.2.cmp(&a.2)));
+        active_clients = with_meta.into_iter().map(|(c, _, _)| c).collect();
+
+        // Filter for vision capabilities if any prompt contains images
+        let has_images = prompts.iter().any(|p| p.images.is_some());
+        if has_images {
+            let mut vision_clients = Vec::new();
+            for client in &active_clients {
+                let is_vision = client.lock().await.is_vision().await.unwrap_or(false);
+                if is_vision {
+                    vision_clients.push(client.clone());
+                }
+            }
+
+            if vision_clients.is_empty() {
+                return Err(ClusterError::VisionNotSupported(
+                "No vision-capable models found in cluster. Add a vision model (e.g. minicpm-v) to your config.".into(),
+            ));
+            }
+            active_clients = vision_clients;
+        }
+
+        Ok(active_clients)
     }
 }
