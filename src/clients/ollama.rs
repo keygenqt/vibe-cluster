@@ -227,15 +227,40 @@ impl Client for OllamaClient {
             .send()
             .await?;
 
+        let status = response.status();
         let body_text = response.text().await?;
+
+        // Hard boundary verification: catch API errors and context overflows before stream fallback
+        if !status.is_success() {
+            // Safely extract deeply nested error messages from escaped JSON string containers
+            if let Ok(top_json) = serde_json::from_str::<serde_json::Value>(&body_text) {
+                if let Some(error_payload) = top_json["error"].as_str() {
+                    if let Ok(inner_json) = serde_json::from_str::<serde_json::Value>(error_payload)
+                    {
+                        if let Some(msg) = inner_json["error"]["message"].as_str() {
+                            return Err(ClusterError::Model(format!("HTTP {} - {}", status, msg)));
+                        }
+                    }
+                } else if let Some(msg) = top_json["error"]["message"]
+                    .as_str()
+                    .or_else(|| top_json["error"].as_str())
+                {
+                    return Err(ClusterError::Model(format!("HTTP {} - {}", status, msg)));
+                }
+            }
+            return Err(ClusterError::Model(format!(
+                "HTTP {} - {}",
+                status, body_text
+            )));
+        }
+
         let mut full_response = String::new();
         let mut thinking_response = String::new();
         let mut hit_token_limit = false;
 
-        // Use stream deserializer to process the entire response body block
+        // Deserializer chunk loop iterator processing
         let stream =
             serde_json::Deserializer::from_str(&body_text).into_iter::<serde_json::Value>();
-
         for value in stream {
             if let Ok(json_chunk) = value {
                 if let Some(reason) = json_chunk["done_reason"].as_str() {
@@ -259,6 +284,7 @@ impl Client for OllamaClient {
             )));
         }
 
+        // Fallback block for non-standard plain text response envelopes
         if full_response.is_empty() && !body_text.contains("\"response\":\"\"") {
             full_response = body_text;
         }

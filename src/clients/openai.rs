@@ -132,7 +132,6 @@ impl Client for OpenAiClient {
             "stream": false,
         });
 
-        // Transport and HTTP error codes are automatically transformed into ClusterError::Http via ?
         let response = self
             .client
             .post(&url)
@@ -143,8 +142,27 @@ impl Client for OpenAiClient {
             .send()
             .await?;
 
-        let response = response.error_for_status()?;
-        let json: serde_json::Value = response.json().await?;
+        let status = response.status();
+        let body_text = response.text().await?;
+
+        // Hard boundary verification: catch OpenAI/vLLM context limits and API errors
+        if !status.is_success() {
+            if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&body_text) {
+                // Support both standard OpenAI nested error maps and flat error objects
+                if let Some(msg) = err_json["error"]["message"]
+                    .as_str()
+                    .or_else(|| err_json["error"].as_str())
+                {
+                    return Err(ClusterError::Model(format!("HTTP {} - {}", status, msg)));
+                }
+            }
+            return Err(ClusterError::Model(format!(
+                "HTTP {} - {}",
+                status, body_text
+            )));
+        }
+
+        let json: serde_json::Value = serde_json::from_str(&body_text)?;
 
         // Safe extraction of the first message node using options to prevent runtime panics
         let message_node = json["choices"]
@@ -162,6 +180,20 @@ impl Client for OpenAiClient {
 
         // Extract core content text
         let mut raw = message_node["content"].as_str().unwrap_or("").to_string();
+
+        // Safe finish reason boundary evaluation
+        let finish_reason = json["choices"]
+            .get(0)
+            .and_then(|choice| choice.get("finish_reason"))
+            .and_then(|reason| reason.as_str())
+            .unwrap_or("");
+
+        if finish_reason == "length" && raw.is_empty() {
+            return Err(ClusterError::TokenLimitExceeded(format!(
+                "Model '{}' hit output token limit (num_predict: {}).",
+                self.model, self.num_predict
+            )));
+        }
 
         // Fallback for vLLM/Ollama OpenAI-compatible response structures
         if raw.is_empty() {
