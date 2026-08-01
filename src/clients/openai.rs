@@ -8,6 +8,7 @@ use reqwest::Client as HttpClient;
 
 use crate::Prompt;
 use crate::clients::client::Client;
+use crate::clients::vision;
 use crate::error::ClusterError;
 use crate::params::ConnectionParams;
 use crate::provider::Provider;
@@ -19,11 +20,13 @@ pub struct OpenAiClient {
     host: String,
     model: String,
     api_key: String,
-    temperature: f32,
+    temperature: f64,
     seed: u64,
     num_predict: usize,
     timeout_secs: u64,
     provider: Provider,
+    /// Vision capability, detected once at construction (name-based).
+    vision: bool,
 }
 
 #[async_trait]
@@ -70,27 +73,12 @@ impl Client for OpenAiClient {
         Ok(false)
     }
 
-    /// Checks if the model supports vision (image input) via API, with name pattern fallback.
+    /// Checks if the model supports vision (image input).
+    /// Cached at construction: none of the supported cloud providers expose
+    /// modality info via their OpenAI-compatible API, so detection is
+    /// name-based (see clients::vision).
     async fn is_vision(&self) -> Result<bool, ClusterError> {
-        let url = format!("{}/models/{}", self.host, self.model);
-        // Try API first
-        if let Ok(r) = self
-            .client
-            .get(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await
-        {
-            if let Ok(json) = r.json::<serde_json::Value>().await {
-                if let Some(modalities) = json["modalities"].as_array() {
-                    return Ok(modalities.iter().any(|v| v.as_str() == Some("image")));
-                }
-            }
-        }
-        // Fallback to name pattern
-        let name = self.model.to_lowercase();
-        Ok(name.contains("vl") || name.contains("vision") || name.contains("gpt-4o"))
+        Ok(self.vision)
     }
 
     /// Cloud models cannot be ejected (always available).
@@ -111,9 +99,16 @@ impl Client for OpenAiClient {
             let mut content: Vec<serde_json::Value> =
                 vec![serde_json::json!({"type": "text", "text": prompt.user})];
             for img in images {
+                // Prompt.images accepts raw base64 or a ready-made data: URI;
+                // each client normalizes the payload for its provider.
+                let url = if img.starts_with("data:") {
+                    img.clone()
+                } else {
+                    format!("data:{};base64,{}", vision::mime_from_base64(img), img)
+                };
                 content.push(serde_json::json!({
                     "type": "image_url",
-                    "image_url": {"url": format!("data:image/png;base64,{}", img)}
+                    "image_url": {"url": url}
                 }));
             }
             serde_json::Value::Array(content)
@@ -210,16 +205,22 @@ impl Client for OpenAiClient {
 impl OpenAiClient {
     /// Creates a new OpenAI-compatible client from connection parameters.
     pub fn new(params: ConnectionParams) -> Self {
+        let temp = params.temperature.unwrap_or(0.7) as f64;
+        // Detect vision before moving fields out of params.
+        // Name-based; update clients::vision if a provider adds a model
+        // that does not match the existing patterns.
+        let vision = vision::model_supports_vision(&params.provider, &params.model);
         Self {
             client: HttpClient::new(),
             host: params.host,
             model: params.model,
             api_key: params.api_key.unwrap_or_default(),
-            temperature: params.temperature.unwrap_or(0.7),
+            temperature: (temp * 100.0).round() / 100.0,
             seed: params.seed.unwrap_or(42),
             num_predict: params.num_predict.unwrap_or(2048),
             timeout_secs: params.timeout_secs.unwrap_or(120),
             provider: params.provider,
+            vision,
         }
     }
 }

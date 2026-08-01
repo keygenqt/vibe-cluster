@@ -5,10 +5,10 @@ use std::time::Duration;
 
 use async_trait::async_trait;
 use reqwest::Client as HttpClient;
-use uuid::Uuid;
 
 use crate::Prompt;
 use crate::clients::client::Client;
+use crate::clients::vision;
 use crate::error::ClusterError;
 use crate::params::ConnectionParams;
 use crate::provider::Provider;
@@ -19,7 +19,7 @@ pub struct OllamaClient {
     client: HttpClient,
     host: String,
     model: String,
-    temperature: f32,
+    temperature: f64,
     seed: u64,
     num_ctx: usize,
     num_predict: usize,
@@ -59,32 +59,15 @@ impl Client for OllamaClient {
         Ok(response.status().is_success())
     }
 
-    /// Checks if the model is loaded in Ollama memory via /api/show.
+    /// Checks if the model is loaded in Ollama memory via /api/ps.
+    /// NOTE: /api/show cannot be used here — it succeeds for models that
+    /// are merely present on disk, not loaded.
     async fn is_active(&self) -> Result<bool, ClusterError> {
-        self.is_available().await?;
-
-        let url = format!("{}/api/show", self.host);
-        let request = serde_json::json!({
-            "name": self.model,
-        });
-        match self
-            .client
-            .post(&url)
-            .json(&request)
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await
-        {
-            Ok(r) => Ok(r.status().is_success()),
-            Err(_) => Ok(false),
+        if !self.is_available().await? {
+            return Ok(false);
         }
-    }
 
-    /// Checks if the model is currently processing a request via /api/ps.
-    async fn is_busy(&self) -> Result<bool, ClusterError> {
         let url = format!("{}/api/ps", self.host);
-
-        // Network errors are automatically transformed into ClusterError::Http via ? operator
         let response = self
             .client
             .get(&url)
@@ -92,7 +75,6 @@ impl Client for OllamaClient {
             .send()
             .await?;
 
-        // Check for HTTP success status before parsing the response body
         if !response.status().is_success() {
             return Err(ClusterError::Model(format!(
                 "Ollama /api/ps returned status: {}",
@@ -100,21 +82,31 @@ impl Client for OllamaClient {
             )));
         }
 
-        // Parse JSON safely using implemented transformation traits
         let json: serde_json::Value = response.json().await?;
 
-        // Check if the current model is present in the active models list
+        // Check if the current model is present in the loaded models list
         if let Some(models) = json["models"].as_array() {
-            let is_running = models
-                .iter()
-                .any(|m| m["name"].as_str() == Some(&self.model));
-            return Ok(is_running);
+            return Ok(models.iter().any(|m| {
+                m["name"]
+                    .as_str()
+                    .map(|name| model_names_match(name, &self.model))
+                    .unwrap_or(false)
+            }));
         }
 
         Ok(false)
     }
 
+    /// Ollama does not expose a "busy" state: it serializes requests per
+    /// loaded model internally. Always reports not busy; the router should
+    /// rely on Ollama's own queueing.
+    async fn is_busy(&self) -> Result<bool, ClusterError> {
+        Ok(false)
+    }
+
     /// Checks if the model supports vision (image input) via /api/show.
+    /// Live check (not cached): a local model can be re-pulled under the
+    /// same name at any time.
     async fn is_vision(&self) -> Result<bool, ClusterError> {
         let url = format!("{}/api/show", self.host);
         let request = serde_json::json!({ "name": self.model });
@@ -139,7 +131,7 @@ impl Client for OllamaClient {
         // Parse JSON safely using implemented transformation traits
         let json: serde_json::Value = response.json().await?;
 
-        // Check modern capabilities array for explicit vision support
+        // Modern Ollama versions expose an explicit capabilities array
         let capabilities = json["capabilities"].as_array();
         let is_vision_capable = capabilities
             .map(|c| c.iter().any(|v| v.as_str() == Some("vision")))
@@ -149,18 +141,24 @@ impl Client for OllamaClient {
             return Ok(true);
         }
 
-        // Fallback for older Ollama versions using family and projector metadata
+        // Fallback for older Ollama versions: vision models carry a CLIP
+        // encoder, a dedicated projector, or a known vision family.
         let families = json["details"]["families"].as_array();
-        let has_clip = families
+        let has_vision_family = families
             .map(|f| {
-                f.iter()
-                    .any(|v| v.as_str() == Some("clip") || v.as_str() == Some("qwen3vl"))
+                f.iter().any(|v| {
+                    matches!(
+                        v.as_str(),
+                        Some("clip") | Some("mllama") | Some("qwen2vl") | Some("qwen3vl")
+                    )
+                })
             })
             .unwrap_or(false);
 
-        let has_projector = json["details"]["projector_info"].is_object();
+        // projector_info is a TOP-LEVEL field of /api/show, next to model_info
+        let has_projector = json["projector_info"].is_object();
 
-        Ok(has_clip || has_projector)
+        Ok(has_vision_family || has_projector)
     }
 
     /// Unloads the model from Ollama memory via /api/generate with keep_alive=0.
@@ -202,7 +200,6 @@ impl Client for OllamaClient {
             "model": self.model,
             "prompt": prompt.user,
             "stream": false,
-            "session_id": Uuid::new_v4().to_string(),
             "options": {
                 "temperature": self.temperature,
                 "seed": self.seed,
@@ -216,7 +213,12 @@ impl Client for OllamaClient {
         }
 
         if let Some(images) = &prompt.images {
-            request["images"] = serde_json::to_value(images).unwrap_or_default();
+            // Ollama wants raw base64 without a data: URI prefix
+            let raw: Vec<&str> = images
+                .iter()
+                .map(|img| vision::strip_data_uri(img))
+                .collect();
+            request["images"] = serde_json::to_value(raw).unwrap_or_default();
         }
 
         let response = self
@@ -293,14 +295,25 @@ impl Client for OllamaClient {
     }
 }
 
+/// Ollama reports full model names in /api/ps (e.g. "llava:latest"),
+/// while users may configure the short form ("llava").
+/// Compare names with an implicit ":latest" suffix on both sides.
+fn model_names_match(a: &str, b: &str) -> bool {
+    fn strip_latest(s: &str) -> &str {
+        s.strip_suffix(":latest").unwrap_or(s)
+    }
+    strip_latest(a) == strip_latest(b)
+}
+
 impl OllamaClient {
     /// Creates a new Ollama client from connection parameters.
     pub fn new(params: ConnectionParams) -> Self {
+        let temp = params.temperature.unwrap_or(0.7) as f64;
         Self {
             client: HttpClient::new(),
             host: params.host,
             model: params.model,
-            temperature: params.temperature.unwrap_or(0.7),
+            temperature: (temp * 100.0).round() / 100.0,
             seed: params.seed.unwrap_or(42),
             num_ctx: params.num_ctx.unwrap_or(4096),
             num_predict: params.num_predict.unwrap_or(2048),

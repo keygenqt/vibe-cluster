@@ -13,7 +13,7 @@ pub struct ConnectionParams {
     /// Model name (e.g. "qwen2.5:7b", "deepseek-chat").
     pub model: String,
     /// Temperature for generation (0.0-2.0). Lower = more deterministic.
-    pub temperature: Option<f32>,
+    pub temperature: Option<f64>,
     /// Seed for reproducible outputs.
     pub seed: Option<u64>,
     /// Context window size in tokens.

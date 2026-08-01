@@ -13,7 +13,7 @@ One API, multiple providers, zero coordination overhead.
 ## What it does
 
 - Distributes prompts across multiple LLM providers (local and cloud)
-- Supports Ollama and OpenAI-compatible APIs (DeepSeek, Qwen)
+- Supports Ollama and OpenAI-compatible APIs (DeepSeek, Qwen, Kimi, Zhipu)
 - Vision model support — route image prompts to vision-capable models
 - Parallel execution with automatic worker distribution
 - Per-prompt results with provider info, timing, and error details
@@ -100,14 +100,14 @@ let results = cluster
     .unwrap();
 ```
 
-## Supported providers
-
-| Provider | Type  | API                     | Vision |
-| -------- | ----- | ----------------------- | ------ |
-| Ollama   | Local | Native `/api/generate`  | ✓      |
-| DeepSeek | Cloud | OpenAI-compatible `/v1` | -      |
-| Qwen     | Cloud | OpenAI-compatible `/v1` | ✓      |
+| Provider | Type  | API                     | Vision (models)                       |
+| -------- | ----- | ----------------------- | ------------------------------------- |
+| Ollama   | Local | Native `/api/generate`  | ✓ auto-detected via `/api/show`       |
+| DeepSeek | Cloud | OpenAI-compatible `/v1` | –                                     |
+| Qwen     | Cloud | OpenAI-compatible `/v1` | ✓ `qwen-vl-*`, `qvq-*`, `qwen-omni-*` |
+| Kimi     | Cloud | OpenAI-compatible `/v1` | ✓ `*-vision-preview`, `kimi-latest`   |
+| Zhipu    | Cloud | OpenAI-compatible `/v1` | ✓ `glm-4v`, `glm-4.1v`, `glm-4.5v`    |
 
 ---
 
-_Part of Vibe tools for Agentic RAG — [Vibe Analyzer](https://vibe-analyzer.keygenqt.com)._
+_Part of Vibe tools for command routing — [Vibe Action](https://vibe-action.keygenqt.com)._

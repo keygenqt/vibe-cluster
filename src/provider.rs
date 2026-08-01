@@ -7,4 +7,6 @@ pub enum Provider {
     Ollama,
     DeepSeek,
     Qwen,
+    Kimi,
+    Zhipu,
 }

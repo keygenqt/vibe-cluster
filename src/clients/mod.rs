@@ -1,5 +1,5 @@
 //! Internal HTTP clients for each supported API type.
-//! Ollama uses its own API; OpenAI-compatible covers DeepSeek, Qwen, Kimi, etc.
+//! Ollama uses its own API; OpenAI-compatible covers DeepSeek, Qwen, Kimi, Zhipu.
 
 use crate::{
     clients::{client::Client, ollama::OllamaClient, openai::OpenAiClient},
@@ -10,11 +10,13 @@ use crate::{
 pub mod client;
 mod ollama;
 mod openai;
+mod vision;
 
-/// Factory function that creates the appropriate Client implementation based on Provider.
 pub fn create_client(params: ConnectionParams) -> Box<dyn Client> {
     match params.provider {
         Provider::Ollama => Box::new(OllamaClient::new(params)),
-        Provider::DeepSeek | Provider::Qwen => Box::new(OpenAiClient::new(params)),
+        Provider::DeepSeek | Provider::Qwen | Provider::Kimi | Provider::Zhipu => {
+            Box::new(OpenAiClient::new(params))
+        }
     }
 }
