@@ -21,6 +21,7 @@
 mod clients;
 mod cluster;
 mod error;
+mod models;
 mod options;
 mod params;
 mod prompt;
@@ -28,8 +29,10 @@ mod provider;
 mod result;
 mod utils;
 
+pub use clients::client::Client;
 pub use cluster::Cluster;
 pub use error::ClusterError;
+pub use models::ModelInfo;
 pub use options::BatchOptions;
 pub use options::ModelFilter;
 pub use params::ConnectionParams;
@@ -37,4 +40,5 @@ pub use prompt::Prompt;
 pub use provider::Provider;
 pub use result::PromptResult;
 
+pub use clients::create_client;
 pub use utils::normalize_text;

@@ -10,6 +10,7 @@ use crate::Prompt;
 use crate::clients::client::Client;
 use crate::clients::vision;
 use crate::error::ClusterError;
+use crate::models::ModelInfo;
 use crate::params::ConnectionParams;
 use crate::provider::Provider;
 
@@ -108,28 +109,7 @@ impl Client for OllamaClient {
     /// Live check (not cached): a local model can be re-pulled under the
     /// same name at any time.
     async fn is_vision(&self) -> Result<bool, ClusterError> {
-        let url = format!("{}/api/show", self.host);
-        let request = serde_json::json!({ "name": self.model });
-
-        // Network errors are automatically transformed into ClusterError::Http via ? operator
-        let response = self
-            .client
-            .post(&url)
-            .json(&request)
-            .timeout(Duration::from_secs(5))
-            .send()
-            .await?;
-
-        // Check for HTTP success status before parsing the response body
-        if !response.status().is_success() {
-            return Err(ClusterError::Model(format!(
-                "Ollama /api/show returned status: {}",
-                response.status()
-            )));
-        }
-
-        // Parse JSON safely using implemented transformation traits
-        let json: serde_json::Value = response.json().await?;
+        let json = self.show_model(&self.model).await?;
 
         // Modern Ollama versions expose an explicit capabilities array
         let capabilities = json["capabilities"].as_array();
@@ -159,6 +139,83 @@ impl Client for OllamaClient {
         let has_projector = json["projector_info"].is_object();
 
         Ok(has_vision_family || has_projector)
+    }
+
+    /// Lists all models on the host. Static facts come from /api/tags;
+    /// capabilities and context length from /api/show per model — on
+    /// failure or older servers they stay `None`.
+    async fn list_models(&self) -> Result<Vec<ModelInfo>, ClusterError> {
+        let url = format!("{}/api/tags", self.host);
+        let response = self
+            .client
+            .get(&url)
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            return Err(ClusterError::Model(format!(
+                "Ollama /api/tags returned status: {}",
+                response.status()
+            )));
+        }
+
+        let json: serde_json::Value = response.json().await?;
+        let Some(models) = json["models"].as_array() else {
+            return Ok(Vec::new());
+        };
+
+        let mut result = Vec::new();
+        for model in models {
+            let Some(name) = model["name"].as_str() else {
+                continue;
+            };
+            let details = &model["details"];
+
+            let mut info = ModelInfo {
+                name: name.to_string(),
+                digest: model["digest"].as_str().map(String::from),
+                remote_model: model["remote_model"].as_str().map(String::from),
+                remote_host: model["remote_host"].as_str().map(String::from),
+                owned_by: None,
+                modified_at: model["modified_at"].as_str().map(String::from),
+                created: None,
+                format: details["format"].as_str().map(String::from),
+                family: details["family"].as_str().map(String::from),
+                families: details["families"].as_array().map(|families| {
+                    families
+                        .iter()
+                        .filter_map(|v| v.as_str().map(String::from))
+                        .collect()
+                }),
+                params: details["parameter_size"].as_str().map(String::from),
+                quantization: details["quantization_level"].as_str().map(String::from),
+                size: model["size"].as_u64(),
+                context_length: None,
+                vision: None,
+                tools: None,
+                thinking: None,
+                embedding: None,
+            };
+
+            // A failed /api/show keeps capabilities None — the provider did not say.
+            if let Ok(show) = self.show_model(name).await {
+                let caps = show["capabilities"].as_array();
+                let has = |cap: &str| caps.map(|c| c.iter().any(|v| v.as_str() == Some(cap)));
+                info.vision = has("vision");
+                info.tools = has("tools");
+                info.thinking = has("thinking");
+                info.embedding = has("embedding");
+                info.context_length = show["model_info"].as_object().and_then(|map| {
+                    map.iter()
+                        .find(|(key, _)| key.ends_with(".context_length"))
+                        .and_then(|(_, value)| value.as_u64())
+                });
+            }
+
+            result.push(info);
+        }
+        Ok(result)
     }
 
     /// Unloads the model from Ollama memory via /api/generate with keep_alive=0.
@@ -319,5 +376,25 @@ impl OllamaClient {
             num_predict: params.num_predict.unwrap_or(2048),
             timeout_secs: params.timeout_secs.unwrap_or(120),
         }
+    }
+
+    /// Fetches /api/show for a model and returns the parsed JSON body.
+    async fn show_model(&self, name: &str) -> Result<serde_json::Value, ClusterError> {
+        let url = format!("{}/api/show", self.host);
+        let request = serde_json::json!({ "name": name });
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await?;
+        if !response.status().is_success() {
+            return Err(ClusterError::Model(format!(
+                "Ollama /api/show returned status: {}",
+                response.status()
+            )));
+        }
+        Ok(response.json().await?)
     }
 }

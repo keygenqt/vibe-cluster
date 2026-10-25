@@ -1,5 +1,5 @@
 //! OpenAI-compatible API client implementation.
-//! Supports DeepSeek, Qwen, Kimi and any other provider with OpenAI-compatible API.
+//! Supports DeepSeek, Qwen, Moonshot and any other provider with OpenAI-compatible API.
 
 use std::time::Duration;
 
@@ -10,6 +10,7 @@ use crate::Prompt;
 use crate::clients::client::Client;
 use crate::clients::vision;
 use crate::error::ClusterError;
+use crate::models::ModelInfo;
 use crate::params::ConnectionParams;
 use crate::provider::Provider;
 
@@ -79,6 +80,69 @@ impl Client for OpenAiClient {
     /// name-based (see clients::vision).
     async fn is_vision(&self) -> Result<bool, ClusterError> {
         Ok(self.vision)
+    }
+
+    /// Lists models on the host. OpenAI-compatible /models reports only
+    /// id/owned_by/created — capabilities stay `None`.
+    async fn list_models(&self) -> Result<Vec<ModelInfo>, ClusterError> {
+        let url = format!("{}/models", self.host);
+        let response = self
+            .client
+            .get(&url)
+            .header("Authorization", format!("Bearer {}", self.api_key))
+            .timeout(Duration::from_secs(5))
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body_text = response.text().await?;
+
+        if !status.is_success() {
+            if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&body_text) {
+                if let Some(msg) = err_json["error"]["message"]
+                    .as_str()
+                    .or_else(|| err_json["error"].as_str())
+                {
+                    return Err(ClusterError::Model(format!("HTTP {} - {}", status, msg)));
+                }
+            }
+            return Err(ClusterError::Model(format!(
+                "HTTP {} - {}",
+                status, body_text
+            )));
+        }
+
+        let json: serde_json::Value = serde_json::from_str(&body_text)?;
+        let Some(models) = json["data"].as_array() else {
+            return Ok(Vec::new());
+        };
+
+        Ok(models
+            .iter()
+            .filter_map(|m| {
+                let name = m["id"].as_str()?.to_string();
+                Some(ModelInfo {
+                    name,
+                    digest: None,
+                    remote_model: None,
+                    remote_host: None,
+                    owned_by: m["owned_by"].as_str().map(String::from),
+                    modified_at: None,
+                    created: m["created"].as_i64(),
+                    format: None,
+                    family: None,
+                    families: None,
+                    params: None,
+                    quantization: None,
+                    size: None,
+                    context_length: None,
+                    vision: None,
+                    tools: None,
+                    thinking: None,
+                    embedding: None,
+                })
+            })
+            .collect())
     }
 
     /// Cloud models cannot be ejected (always available).

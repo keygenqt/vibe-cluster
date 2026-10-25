@@ -2,12 +2,13 @@
 
 use std::time::{Duration, Instant};
 
+use crate::models::ModelInfo;
 use crate::provider::Provider;
 use crate::result::PromptResult;
 use crate::{ClusterError, Prompt};
 use async_trait::async_trait;
 
-/// Internal client trait — not exposed to library users.
+/// Client trait — one implementation per provider API.
 #[async_trait]
 pub trait Client: Send + Sync {
     /// Host URL of this client (e.g. "http://localhost:11434").
@@ -30,6 +31,11 @@ pub trait Client: Send + Sync {
 
     /// Checks if the model supports vision (image input).
     async fn is_vision(&self) -> Result<bool, ClusterError>;
+
+    /// Lists models available on this provider's host (host-level: the
+    /// configured model is ignored). Facts the provider does not
+    /// report stay `None`.
+    async fn list_models(&self) -> Result<Vec<ModelInfo>, ClusterError>;
 
     /// Unload the model from memory (free VRAM).
     async fn eject(&self) -> Result<(), ClusterError>;

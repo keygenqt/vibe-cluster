@@ -1,6 +1,6 @@
 //! Vision capability detection and image payload helpers.
 //!
-//! None of the supported cloud providers (DeepSeek, Qwen, Kimi, Zhipu)
+//! None of the supported cloud providers (DeepSeek, Qwen, Moonshot, Zhipu)
 //! expose modality information through their OpenAI-compatible /models
 //! endpoints, so vision support is detected by provider + model name.
 //! Ollama performs live detection via /api/show (see OllamaClient) and
@@ -24,7 +24,7 @@ pub(crate) fn model_supports_vision(provider: &Provider, model: &str) -> bool {
         Provider::Qwen => name.contains("vl") || name.starts_with("qvq") || name.contains("omni"),
 
         // moonshot-v1-*-vision-preview, kimi-latest (multimodal)
-        Provider::Kimi => name.contains("vision") || name.starts_with("kimi-latest"),
+        Provider::Moonshot => name.contains("vision") || name.starts_with("kimi-latest"),
 
         // glm-4v, glm-4v-plus, glm-4v-flash, glm-4.1v-thinking-flash, glm-4.5v
         Provider::Zhipu => digit_v(&name),
@@ -104,13 +104,16 @@ mod tests {
     }
 
     #[test]
-    fn kimi_vision_models() {
+    fn moonshot_vision_models() {
         assert!(model_supports_vision(
-            &Provider::Kimi,
+            &Provider::Moonshot,
             "moonshot-v1-8k-vision-preview"
         ));
-        assert!(model_supports_vision(&Provider::Kimi, "kimi-latest"));
-        assert!(!model_supports_vision(&Provider::Kimi, "moonshot-v1-8k"));
+        assert!(model_supports_vision(&Provider::Moonshot, "kimi-latest"));
+        assert!(!model_supports_vision(
+            &Provider::Moonshot,
+            "moonshot-v1-8k"
+        ));
     }
 
     #[test]

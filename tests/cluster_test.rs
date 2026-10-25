@@ -2,7 +2,9 @@
 //!
 //! cargo test --test cluster_test -- --test-threads=1 --nocapture
 
-use vibe_cluster::{BatchOptions, Cluster, ConnectionParams, ModelFilter, Prompt, Provider};
+use vibe_cluster::{
+    BatchOptions, Cluster, ConnectionParams, ModelFilter, Prompt, Provider, create_client,
+};
 
 fn test_config() -> Vec<ConnectionParams> {
     vec![ConnectionParams {
@@ -170,6 +172,43 @@ async fn test_empty_prompts() {
 async fn test_empty_connections() {
     let result = Cluster::new(vec![]);
     assert!(result.is_err());
+}
+
+#[tokio::test]
+async fn test_ollama_list_models() {
+    let client = create_client(ConnectionParams {
+        provider: Provider::Ollama,
+        host: "http://localhost:11434".into(),
+        ..Default::default()
+    });
+    let models = client.list_models().await.unwrap();
+
+    assert!(
+        !models.is_empty(),
+        "expected at least one model on the host"
+    );
+
+    // The model from test_config is pulled on the test host
+    let qwen = models
+        .iter()
+        .find(|m| m.name.starts_with("qwen2.5-coder"))
+        .expect("qwen2.5-coder must be pulled on the test host");
+
+    // Facts from /api/tags must always be there for Ollama
+    assert!(
+        qwen.params.is_some(),
+        "parameter_size expected from /api/tags"
+    );
+    assert!(qwen.size.is_some(), "size in bytes expected from /api/tags");
+
+    // Capabilities are tri-state: None (old server / show failed) is valid too
+    println!("models: {}", models.len());
+    for m in &models {
+        println!(
+            "{} — params {:?}, size {:?}, vision {:?}, tools {:?}, thinking {:?}, embedding {:?}, ctx {:?}",
+            m.name, m.params, m.size, m.vision, m.tools, m.thinking, m.embedding, m.context_length
+        );
+    }
 }
 
 #[tokio::test]
