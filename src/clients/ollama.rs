@@ -250,8 +250,52 @@ impl Client for OllamaClient {
         Ok(())
     }
 
-    /// Sends a raw prompt to Ollama /api/generate and returns normalized response text.
+    /// Sends a raw prompt to Ollama: a conversation goes to
+    /// /api/chat, a single prompt stays on /api/generate.
     async fn call(&self, prompt: &Prompt) -> Result<(String, String), ClusterError> {
+        if prompt.history.is_empty() {
+            self.call_generate(prompt).await
+        } else {
+            self.call_chat(prompt).await
+        }
+    }
+}
+
+/// Builds a model error from a failed HTTP response body, digging
+/// the provider's message out of the known JSON envelopes.
+fn http_model_error(status: reqwest::StatusCode, body_text: &str) -> ClusterError {
+    // Safely extract deeply nested error messages from escaped JSON string containers
+    if let Ok(top_json) = serde_json::from_str::<serde_json::Value>(body_text) {
+        if let Some(error_payload) = top_json["error"].as_str() {
+            if let Ok(inner_json) = serde_json::from_str::<serde_json::Value>(error_payload) {
+                if let Some(msg) = inner_json["error"]["message"].as_str() {
+                    return ClusterError::Model(format!("HTTP {} - {}", status, msg));
+                }
+            }
+        } else if let Some(msg) = top_json["error"]["message"]
+            .as_str()
+            .or_else(|| top_json["error"].as_str())
+        {
+            return ClusterError::Model(format!("HTTP {} - {}", status, msg));
+        }
+    }
+    ClusterError::Model(format!("HTTP {} - {}", status, body_text))
+}
+
+/// Ollama reports full model names in /api/ps (e.g. "llava:latest"),
+/// while users may configure the short form ("llava").
+/// Compare names with an implicit ":latest" suffix on both sides.
+fn model_names_match(a: &str, b: &str) -> bool {
+    fn strip_latest(s: &str) -> &str {
+        s.strip_suffix(":latest").unwrap_or(s)
+    }
+    strip_latest(a) == strip_latest(b)
+}
+
+impl OllamaClient {
+    /// Sends a raw single-turn prompt to Ollama /api/generate and
+    /// returns normalized response text.
+    async fn call_generate(&self, prompt: &Prompt) -> Result<(String, String), ClusterError> {
         let url = format!("{}/api/generate", self.host);
         let mut request = serde_json::json!({
             "model": self.model,
@@ -291,26 +335,7 @@ impl Client for OllamaClient {
 
         // Hard boundary verification: catch API errors and context overflows before stream fallback
         if !status.is_success() {
-            // Safely extract deeply nested error messages from escaped JSON string containers
-            if let Ok(top_json) = serde_json::from_str::<serde_json::Value>(&body_text) {
-                if let Some(error_payload) = top_json["error"].as_str() {
-                    if let Ok(inner_json) = serde_json::from_str::<serde_json::Value>(error_payload)
-                    {
-                        if let Some(msg) = inner_json["error"]["message"].as_str() {
-                            return Err(ClusterError::Model(format!("HTTP {} - {}", status, msg)));
-                        }
-                    }
-                } else if let Some(msg) = top_json["error"]["message"]
-                    .as_str()
-                    .or_else(|| top_json["error"].as_str())
-                {
-                    return Err(ClusterError::Model(format!("HTTP {} - {}", status, msg)));
-                }
-            }
-            return Err(ClusterError::Model(format!(
-                "HTTP {} - {}",
-                status, body_text
-            )));
+            return Err(http_model_error(status, &body_text));
         }
 
         let mut full_response = String::new();
@@ -350,19 +375,96 @@ impl Client for OllamaClient {
 
         Ok((thinking_response, full_response))
     }
-}
 
-/// Ollama reports full model names in /api/ps (e.g. "llava:latest"),
-/// while users may configure the short form ("llava").
-/// Compare names with an implicit ":latest" suffix on both sides.
-fn model_names_match(a: &str, b: &str) -> bool {
-    fn strip_latest(s: &str) -> &str {
-        s.strip_suffix(":latest").unwrap_or(s)
+    /// Sends the conversation to Ollama /api/chat — the native
+    /// messages endpoint; /api/generate cannot carry history.
+    async fn call_chat(&self, prompt: &Prompt) -> Result<(String, String), ClusterError> {
+        let url = format!("{}/api/chat", self.host);
+        let mut messages = Vec::new();
+
+        if let Some(system) = &prompt.system {
+            messages.push(serde_json::json!({ "role": "system", "content": system }));
+        }
+
+        for message in &prompt.history {
+            messages.push(serde_json::json!({
+                "role": message.role,
+                "content": message.content,
+            }));
+        }
+
+        let mut last = serde_json::json!({ "role": "user", "content": prompt.user });
+        if let Some(images) = &prompt.images {
+            // Ollama wants raw base64 without a data: URI prefix
+            let raw: Vec<&str> = images
+                .iter()
+                .map(|img| vision::strip_data_uri(img))
+                .collect();
+            last["images"] = serde_json::to_value(raw).unwrap_or_default();
+        }
+        messages.push(last);
+
+        let request = serde_json::json!({
+            "model": self.model,
+            "messages": messages,
+            "stream": false,
+            "options": {
+                "temperature": self.temperature,
+                "seed": self.seed,
+                "num_ctx": self.num_ctx,
+                "num_predict": self.num_predict,
+            }
+        });
+
+        let response = self
+            .client
+            .post(&url)
+            .json(&request)
+            .timeout(Duration::from_secs(self.timeout_secs))
+            .send()
+            .await?;
+
+        let status = response.status();
+        let body_text = response.text().await?;
+
+        if !status.is_success() {
+            return Err(http_model_error(status, &body_text));
+        }
+
+        let mut full_response = String::new();
+        let mut thinking_response = String::new();
+        let mut hit_token_limit = false;
+
+        // the stream chunks mirror /api/generate, content sits one
+        // level deeper — under "message"
+        let stream =
+            serde_json::Deserializer::from_str(&body_text).into_iter::<serde_json::Value>();
+        for value in stream {
+            if let Ok(json_chunk) = value {
+                if let Some(reason) = json_chunk["done_reason"].as_str() {
+                    if reason == "length" {
+                        hit_token_limit = true;
+                    }
+                }
+                if let Some(thinking_text) = json_chunk["message"]["thinking"].as_str() {
+                    thinking_response.push_str(thinking_text);
+                }
+                if let Some(chunk_text) = json_chunk["message"]["content"].as_str() {
+                    full_response.push_str(chunk_text);
+                }
+            }
+        }
+
+        if hit_token_limit && full_response.is_empty() {
+            return Err(ClusterError::TokenLimitExceeded(format!(
+                "Model '{}' hit output token limit (num_predict: {}).",
+                self.model, self.num_predict
+            )));
+        }
+
+        Ok((thinking_response, full_response))
     }
-    strip_latest(a) == strip_latest(b)
-}
 
-impl OllamaClient {
     /// Creates a new Ollama client from connection parameters.
     pub fn new(params: ConnectionParams) -> Self {
         let temp = params.temperature.unwrap_or(0.7) as f64;

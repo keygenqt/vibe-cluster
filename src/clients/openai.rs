@@ -159,6 +159,15 @@ impl Client for OpenAiClient {
             messages.push(serde_json::json!({ "role": "system", "content": system }));
         }
 
+        // prior turns go as native messages: each role gets the chat
+        // template treatment, the prefix stays cache-stable
+        for message in &prompt.history {
+            messages.push(serde_json::json!({
+                "role": message.role,
+                "content": message.content,
+            }));
+        }
+
         let user_content = if let Some(images) = &prompt.images {
             let mut content: Vec<serde_json::Value> =
                 vec![serde_json::json!({"type": "text", "text": prompt.user})];

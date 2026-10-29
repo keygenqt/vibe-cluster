@@ -36,6 +36,7 @@ pub use models::ModelInfo;
 pub use options::BatchOptions;
 pub use options::ModelFilter;
 pub use params::ConnectionParams;
+pub use prompt::HistoryMessage;
 pub use prompt::Prompt;
 pub use provider::Provider;
 pub use result::PromptResult;
