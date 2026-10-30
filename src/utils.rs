@@ -100,3 +100,16 @@ pub fn normalize_text(raw: &str) -> String {
 
     json
 }
+
+/// Formats the error with its source chain: reqwest reports only the
+/// top-level message, the TLS/network cause sits deeper.
+pub(crate) fn error_chain(error: &dyn std::error::Error) -> String {
+    let mut chain = error.to_string();
+    let mut source = error.source();
+    while let Some(cause) = source {
+        chain.push_str(" <- ");
+        chain.push_str(&cause.to_string());
+        source = cause.source();
+    }
+    chain
+}

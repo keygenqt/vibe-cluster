@@ -9,15 +9,19 @@ pub enum Provider {
     Qwen,
     Moonshot,
     Zhipu,
+    Yandex,
+    GigaChat,
 }
 
 impl Provider {
     /// All supported providers, catalog order.
-    pub const ALL: [Provider; 5] = [
+    pub const ALL: [Provider; 7] = [
         Provider::Ollama,
         Provider::DeepSeek,
         Provider::Qwen,
         Provider::Moonshot,
         Provider::Zhipu,
+        Provider::Yandex,
+        Provider::GigaChat,
     ];
 }

@@ -21,6 +21,8 @@ pub struct OpenAiClient {
     host: String,
     model: String,
     api_key: String,
+    /// Project/folder id for providers that route by it (Yandex).
+    project: Option<String>,
     temperature: f64,
     seed: u64,
     num_predict: usize,
@@ -55,13 +57,16 @@ impl Client for OpenAiClient {
         let response = self
             .client
             .get(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Authorization", self.auth_value())
             .timeout(Duration::from_secs(5))
             .send()
             .await?;
 
-        // Return true if the cloud server responded with a successful status code
-        Ok(response.status().is_success())
+        // Yandex's OpenAI layer has no /models route: a 404 here still
+        // proves the host is reachable and the key routing works.
+        Ok(response.status().is_success()
+            || (self.provider == Provider::Yandex
+                && response.status() == reqwest::StatusCode::NOT_FOUND))
     }
 
     /// Cloud models are always active (no loading/unloading).
@@ -89,7 +94,7 @@ impl Client for OpenAiClient {
         let response = self
             .client
             .get(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
+            .header("Authorization", self.auth_value())
             .timeout(Duration::from_secs(5))
             .send()
             .await?;
@@ -110,6 +115,34 @@ impl Client for OpenAiClient {
                 "HTTP {} - {}",
                 status, body_text
             )));
+        }
+
+        // Yandex does not expose a model catalog via API — static list
+        // mirroring the Model Gallery (only -lite is curl-verified).
+        if self.provider == Provider::Yandex {
+            return Ok(["yandexgpt-5-lite", "yandexgpt-5-pro"]
+                .iter()
+                .map(|name| ModelInfo {
+                    name: name.to_string(),
+                    digest: None,
+                    remote_model: None,
+                    remote_host: None,
+                    owned_by: Some("yandex".into()),
+                    modified_at: None,
+                    created: None,
+                    format: None,
+                    family: None,
+                    families: None,
+                    params: None,
+                    quantization: None,
+                    size: None,
+                    context_length: None,
+                    vision: None,
+                    tools: None,
+                    thinking: None,
+                    embedding: None,
+                })
+                .collect());
         }
 
         let json: serde_json::Value = serde_json::from_str(&body_text)?;
@@ -192,7 +225,7 @@ impl Client for OpenAiClient {
         messages.push(serde_json::json!({ "role": "user", "content": user_content }));
 
         let request = serde_json::json!({
-            "model": self.model,
+            "model": self.model_uri(),
             "messages": messages,
             "temperature": self.temperature,
             "seed": self.seed,
@@ -200,11 +233,16 @@ impl Client for OpenAiClient {
             "stream": false,
         });
 
-        let response = self
+        let mut builder = self
             .client
             .post(&url)
-            .header("Authorization", format!("Bearer {}", self.api_key))
-            .header("Content-Type", "application/json")
+            .header("Authorization", self.auth_value())
+            .header("Content-Type", "application/json");
+        // Yandex routes the request to the project's folder.
+        if let (Provider::Yandex, Some(project)) = (&self.provider, &self.project) {
+            builder = builder.header("OpenAI-Project", project);
+        }
+        let response = builder
             .json(&request)
             .timeout(Duration::from_secs(self.timeout_secs))
             .send()
@@ -276,6 +314,24 @@ impl Client for OpenAiClient {
 }
 
 impl OpenAiClient {
+    /// Authorization header value: Yandex wants "Api-Key", the rest — "Bearer".
+    fn auth_value(&self) -> String {
+        match self.provider {
+            Provider::Yandex => format!("Api-Key {}", self.api_key),
+            _ => format!("Bearer {}", self.api_key),
+        }
+    }
+
+    /// Yandex models are addressed as URIs: gpt://<folder>/<name>.
+    fn model_uri(&self) -> String {
+        match (&self.provider, &self.project) {
+            (Provider::Yandex, Some(project)) if !self.model.starts_with("gpt://") => {
+                format!("gpt://{}/{}", project, self.model)
+            }
+            _ => self.model.clone(),
+        }
+    }
+
     /// Creates a new OpenAI-compatible client from connection parameters.
     pub fn new(params: ConnectionParams) -> Self {
         let temp = params.temperature.unwrap_or(0.7) as f64;
@@ -288,6 +344,7 @@ impl OpenAiClient {
             host: params.host,
             model: params.model,
             api_key: params.api_key.unwrap_or_default(),
+            project: params.project.clone(),
             temperature: (temp * 100.0).round() / 100.0,
             seed: params.seed.unwrap_or(42),
             num_predict: params.num_predict.unwrap_or(2048),

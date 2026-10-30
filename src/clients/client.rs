@@ -73,16 +73,38 @@ pub trait Client: Send + Sync {
                     // Handle standard transport and HTTP network errors if applicable
                     if let ClusterError::Http(ref reqwest_err) = e {
                         if reqwest_err.is_timeout() && attempts < retries {
+                            log::warn!(
+                                "{:?}/{}: attempt {}/{} timed out, retrying",
+                                self.provider(),
+                                self.model_name(),
+                                attempts,
+                                retries
+                            );
                             tokio::time::sleep(Duration::from_millis(500)).await;
                             continue;
                         }
                         if reqwest_err.is_connect() && attempts < retries {
+                            log::warn!(
+                                "{:?}/{}: attempt {}/{} connect failed, retrying",
+                                self.provider(),
+                                self.model_name(),
+                                attempts,
+                                retries
+                            );
                             tokio::time::sleep(Duration::from_millis(500)).await;
                             continue;
                         }
 
                         if let Some(status) = reqwest_err.status() {
                             if status.is_server_error() && attempts < retries {
+                                log::warn!(
+                                    "{:?}/{}: attempt {}/{} got HTTP {}, retrying",
+                                    self.provider(),
+                                    self.model_name(),
+                                    attempts,
+                                    retries,
+                                    status.as_u16()
+                                );
                                 tokio::time::sleep(Duration::from_millis(500)).await;
                                 continue;
                             }
@@ -105,9 +127,25 @@ pub trait Client: Send + Sync {
 
                     // Retry loop fallback for remaining attempts before total exhaustion
                     if attempts < retries {
+                        log::warn!(
+                            "{:?}/{}: attempt {}/{} failed, retrying: {}",
+                            self.provider(),
+                            self.model_name(),
+                            attempts,
+                            retries,
+                            e
+                        );
                         tokio::time::sleep(Duration::from_millis(500)).await;
                         continue;
                     }
+
+                    log::error!(
+                        "{:?}/{}: failed after {} attempts: {}",
+                        self.provider(),
+                        self.model_name(),
+                        attempts,
+                        e
+                    );
 
                     // Return the structured cluster error directly without temporary allocations
                     return Err(e);

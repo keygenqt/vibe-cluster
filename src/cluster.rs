@@ -311,6 +311,7 @@ impl Cluster {
         }
 
         // Collect parallel task results matching the exact source collection type
+        let candidates = active_clients.len();
         let mut reachable = Vec::new();
         for task in futures::future::join_all(tasks).await {
             if let Ok(Some(client)) = task {
@@ -318,6 +319,12 @@ impl Cluster {
             }
         }
         let mut active_clients = reachable;
+
+        log::debug!(
+            "Cluster: {}/{} clients reachable",
+            active_clients.len(),
+            candidates
+        );
 
         if active_clients.is_empty() {
             return Err(ClusterError::Unavailable(

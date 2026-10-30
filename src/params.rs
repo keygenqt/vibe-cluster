@@ -24,6 +24,8 @@ pub struct ConnectionParams {
     pub timeout_secs: Option<u64>,
     /// API key for cloud providers (not needed for Ollama).
     pub api_key: Option<String>,
+    /// Project/folder id for providers that route by it (Yandex).
+    pub project: Option<String>,
     /// Number of parallel connections to this provider (default 1).
     pub parallel: usize,
 }
@@ -41,6 +43,7 @@ impl Default for ConnectionParams {
             num_predict: None,
             timeout_secs: Some(120),
             api_key: None,
+            project: None,
             parallel: 1,
         }
     }
