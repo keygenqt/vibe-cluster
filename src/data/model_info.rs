@@ -1,4 +1,7 @@
-//! Provider model catalog structures.
+// SPDX-FileCopyrightText: 2026 Vitaliy Zarubin <keygenqt@yandex.ru>
+// SPDX-License-Identifier: Apache-2.0
+
+//! Provider model catalog structure.
 //! `ModelInfo` aggregates everything the provider APIs report about a
 //! model; fields a provider does not report stay `None`.
 

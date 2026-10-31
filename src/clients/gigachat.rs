@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitaliy Zarubin <keygenqt@yandex.ru>
+// SPDX-License-Identifier: Apache-2.0
+
 //! GigaChat API client implementation.
 //! OAuth access token from Sber (30 min TTL, cached), then
 //! OpenAI-compatible chat completions on api.giga.chat.
@@ -7,13 +10,16 @@ use std::time::{Duration, Instant};
 use async_trait::async_trait;
 use reqwest::Client as HttpClient;
 
-use crate::Prompt;
-use crate::clients::client::Client;
+use crate::client::Client;
+use crate::data::ConnectionParams;
+use crate::data::ModelInfo;
+use crate::data::Prompt;
+use crate::data::PromptEvent;
+use crate::data::Provider;
 use crate::error::ClusterError;
-use crate::models::ModelInfo;
-use crate::params::ConnectionParams;
-use crate::provider::Provider;
-use crate::utils::error_chain;
+use crate::error::error_chain;
+use crate::support::spawn_sse_chunk_forwarder;
+use tokio::sync::mpsc;
 
 /// OAuth endpoint issuing short-lived access tokens.
 const OAUTH_URL: &str = "https://ngw.devices.sberbank.ru:9443/api/v2/oauth";
@@ -236,6 +242,72 @@ impl Client for GigaChatClient {
 
         unreachable!("retry loop returns or continues on both attempts")
     }
+
+    /// Streams the response via SSE (stream=true). The OAuth token
+    /// refresh retry mirrors `call`. HTTP errors before the stream
+    /// keep the Err return; a transport error mid-stream is sent through
+    /// the channel before it closes.
+    async fn call_stream(
+        &self,
+        prompt: &Prompt,
+    ) -> Result<mpsc::Receiver<Result<PromptEvent, ClusterError>>, ClusterError> {
+        let url = format!("{}/chat/completions", self.host);
+        let mut messages = Vec::new();
+
+        if let Some(system) = &prompt.system {
+            messages.push(serde_json::json!({ "role": "system", "content": system }));
+        }
+
+        for message in &prompt.history {
+            messages.push(serde_json::json!({
+                "role": message.role,
+                "content": message.content,
+            }));
+        }
+
+        messages.push(serde_json::json!({ "role": "user", "content": prompt.user }));
+
+        let request = serde_json::json!({
+            "model": self.model,
+            "messages": messages,
+            "temperature": self.temperature,
+            "seed": self.seed,
+            "max_tokens": self.num_predict,
+            "stream": true,
+        });
+
+        // One automatic retry with a fresh token when the cached one
+        // expires between the refresh margin and the real 30-minute TTL.
+        for attempt in 0..2 {
+            let token = self.access_token().await?;
+
+            // No total timeout: a long generation must not be cut by one;
+            // the cancel token (Cluster) stops runaway streams.
+            let response = self
+                .client
+                .post(&url)
+                .header("Authorization", format!("Bearer {}", token))
+                .header("Content-Type", "application/json")
+                .json(&request)
+                .send()
+                .await?;
+
+            let status = response.status();
+            if status == reqwest::StatusCode::UNAUTHORIZED && attempt == 0 {
+                self.invalidate_token().await;
+                continue;
+            }
+
+            if !status.is_success() {
+                let body_text = response.text().await?;
+                return Err(http_model_error(status, &body_text));
+            }
+
+            return Ok(spawn_sse_chunk_forwarder(response));
+        }
+
+        unreachable!("retry loop returns or continues on both attempts")
+    }
 }
 
 impl GigaChatClient {
@@ -342,8 +414,14 @@ fn http_model_error(status: reqwest::StatusCode, body_text: &str) -> ClusterErro
             .as_str()
             .or_else(|| err_json["error"].as_str())
         {
-            return ClusterError::Model(format!("HTTP {} - {}", status, msg));
+            return ClusterError::HttpStatus {
+                status: status.as_u16(),
+                message: msg.to_string(),
+            };
         }
     }
-    ClusterError::Model(format!("HTTP {} - {}", status, body_text))
+    ClusterError::HttpStatus {
+        status: status.as_u16(),
+        message: body_text.to_string(),
+    }
 }

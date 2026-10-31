@@ -1,18 +1,29 @@
+// SPDX-FileCopyrightText: 2026 Vitaliy Zarubin <keygenqt@yandex.ru>
+// SPDX-License-Identifier: Apache-2.0
+
 //! OpenAI-compatible API client implementation.
-//! Supports DeepSeek, Qwen, Moonshot and any other provider with OpenAI-compatible API.
+//! Supports OpenAI itself, DeepSeek, Qwen, Moonshot, Zhipu and any other
+//! provider with OpenAI-compatible API.
 
 use std::time::Duration;
 
 use async_trait::async_trait;
 use reqwest::Client as HttpClient;
+use tokio::sync::mpsc;
 
-use crate::Prompt;
-use crate::clients::client::Client;
-use crate::clients::vision;
+use crate::client::Client;
+use crate::data::ConnectionParams;
+use crate::data::ModelInfo;
+use crate::data::Prompt;
+use crate::data::PromptEvent;
+use crate::data::Provider;
 use crate::error::ClusterError;
-use crate::models::ModelInfo;
-use crate::params::ConnectionParams;
-use crate::provider::Provider;
+use crate::support::mime_from_base64;
+use crate::support::model_supports_vision;
+use crate::support::spawn_sse_chunk_forwarder;
+
+/// Default host for the OpenAI provider when none is configured.
+const DEFAULT_API_HOST: &str = "https://api.openai.com/v1";
 
 /// Client for interacting with OpenAI-compatible APIs (DeepSeek, Qwen, etc.).
 #[derive(Clone)]
@@ -39,12 +50,12 @@ impl Client for OpenAiClient {
         &self.host
     }
 
-    /// Returns the provider set at creation (DeepSeek, Qwen, etc.).
+    /// Returns the provider set at creation (OpenAI, DeepSeek, Qwen, etc.).
     fn provider(&self) -> Provider {
-        self.provider.clone()
+        self.provider
     }
 
-    /// Returns the model name (e.g. "deepseek-chat", "qwen-max").
+    /// Returns the model name (e.g. "gpt-4o", "deepseek-chat", "qwen-max").
     fn model_name(&self) -> &str {
         &self.model
     }
@@ -82,7 +93,7 @@ impl Client for OpenAiClient {
     /// Checks if the model supports vision (image input).
     /// Cached at construction: none of the supported cloud providers expose
     /// modality info via their OpenAI-compatible API, so detection is
-    /// name-based (see clients::vision).
+    /// name-based (see support::vision).
     async fn is_vision(&self) -> Result<bool, ClusterError> {
         Ok(self.vision)
     }
@@ -102,7 +113,9 @@ impl Client for OpenAiClient {
         let status = response.status();
         let body_text = response.text().await?;
 
-        if !status.is_success() {
+        if !status.is_success()
+            && !(self.provider == Provider::Yandex && status == reqwest::StatusCode::NOT_FOUND)
+        {
             if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&body_text) {
                 if let Some(msg) = err_json["error"]["message"]
                     .as_str()
@@ -210,7 +223,7 @@ impl Client for OpenAiClient {
                 let url = if img.starts_with("data:") {
                     img.clone()
                 } else {
-                    format!("data:{};base64,{}", vision::mime_from_base64(img), img)
+                    format!("data:{};base64,{}", mime_from_base64(img), img)
                 };
                 content.push(serde_json::json!({
                     "type": "image_url",
@@ -253,19 +266,7 @@ impl Client for OpenAiClient {
 
         // Hard boundary verification: catch OpenAI/vLLM context limits and API errors
         if !status.is_success() {
-            if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(&body_text) {
-                // Support both standard OpenAI nested error maps and flat error objects
-                if let Some(msg) = err_json["error"]["message"]
-                    .as_str()
-                    .or_else(|| err_json["error"].as_str())
-                {
-                    return Err(ClusterError::Model(format!("HTTP {} - {}", status, msg)));
-                }
-            }
-            return Err(ClusterError::Model(format!(
-                "HTTP {} - {}",
-                status, body_text
-            )));
+            return Err(http_model_error(status, &body_text));
         }
 
         let json: serde_json::Value = serde_json::from_str(&body_text)?;
@@ -311,6 +312,82 @@ impl Client for OpenAiClient {
 
         Ok((thinking.to_string(), raw))
     }
+
+    /// Streams the response via SSE (stream=true). HTTP errors before the stream
+    /// keep the Err return; a transport error mid-stream is sent through the
+    /// channel before it closes.
+    async fn call_stream(
+        &self,
+        prompt: &Prompt,
+    ) -> Result<mpsc::Receiver<Result<PromptEvent, ClusterError>>, ClusterError> {
+        let url = format!("{}/chat/completions", self.host);
+        let mut messages = Vec::new();
+
+        if let Some(system) = &prompt.system {
+            messages.push(serde_json::json!({ "role": "system", "content": system }));
+        }
+
+        for message in &prompt.history {
+            messages.push(serde_json::json!({
+                "role": message.role,
+                "content": message.content,
+            }));
+        }
+
+        let user_content = if let Some(images) = &prompt.images {
+            let mut content: Vec<serde_json::Value> =
+                vec![serde_json::json!({"type": "text", "text": prompt.user})];
+            for img in images {
+                // Prompt.images accepts raw base64 or a ready-made data: URI;
+                // each client normalizes the payload for its provider.
+                let url = if img.starts_with("data:") {
+                    img.clone()
+                } else {
+                    format!("data:{};base64,{}", mime_from_base64(img), img)
+                };
+                content.push(serde_json::json!({
+                    "type": "image_url",
+                    "image_url": {"url": url}
+                }));
+            }
+            serde_json::Value::Array(content)
+        } else {
+            serde_json::Value::String(prompt.user.clone())
+        };
+
+        messages.push(serde_json::json!({ "role": "user", "content": user_content }));
+
+        let request = serde_json::json!({
+            "model": self.model_uri(),
+            "messages": messages,
+            "temperature": self.temperature,
+            "seed": self.seed,
+            "max_tokens": self.num_predict,
+            "stream": true,
+        });
+
+        let mut builder = self
+            .client
+            .post(&url)
+            .header("Authorization", self.auth_value())
+            .header("Content-Type", "application/json");
+        // Yandex routes the request to the project's folder.
+        if let (Provider::Yandex, Some(project)) = (&self.provider, &self.project) {
+            builder = builder.header("OpenAI-Project", project);
+        }
+
+        // No total timeout: a long generation must not be cut by one;
+        // the cancel token (Cluster) stops runaway streams.
+        let response = builder.json(&request).send().await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body_text = response.text().await?;
+            return Err(http_model_error(status, &body_text));
+        }
+
+        Ok(spawn_sse_chunk_forwarder(response))
+    }
 }
 
 impl OpenAiClient {
@@ -333,15 +410,22 @@ impl OpenAiClient {
     }
 
     /// Creates a new OpenAI-compatible client from connection parameters.
+    /// An empty host falls back to the OpenAI API host for the OpenAI
+    /// provider; the other providers keep the host as given.
     pub fn new(params: ConnectionParams) -> Self {
         let temp = params.temperature.unwrap_or(0.7) as f64;
         // Detect vision before moving fields out of params.
-        // Name-based; update clients::vision if a provider adds a model
+        // Name-based; update support::vision if a provider adds a model
         // that does not match the existing patterns.
-        let vision = vision::model_supports_vision(&params.provider, &params.model);
+        let vision = model_supports_vision(&params.provider, &params.model);
+        let host = if params.provider == Provider::OpenAI && params.host.is_empty() {
+            DEFAULT_API_HOST.to_string()
+        } else {
+            params.host
+        };
         Self {
             client: HttpClient::new(),
-            host: params.host,
+            host,
             model: params.model,
             api_key: params.api_key.unwrap_or_default(),
             project: params.project.clone(),
@@ -352,5 +436,26 @@ impl OpenAiClient {
             provider: params.provider,
             vision,
         }
+    }
+}
+
+/// Builds a model error from a failed HTTP response body, digging
+/// the error message out of the OpenAI-style JSON envelopes.
+fn http_model_error(status: reqwest::StatusCode, body_text: &str) -> ClusterError {
+    if let Ok(err_json) = serde_json::from_str::<serde_json::Value>(body_text) {
+        // Support both standard OpenAI nested error maps and flat error objects
+        if let Some(msg) = err_json["error"]["message"]
+            .as_str()
+            .or_else(|| err_json["error"].as_str())
+        {
+            return ClusterError::HttpStatus {
+                status: status.as_u16(),
+                message: msg.to_string(),
+            };
+        }
+    }
+    ClusterError::HttpStatus {
+        status: status.as_u16(),
+        message: body_text.to_string(),
     }
 }

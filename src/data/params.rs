@@ -1,7 +1,10 @@
+// SPDX-FileCopyrightText: 2026 Vitaliy Zarubin <keygenqt@yandex.ru>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Connection parameters for LLM providers.
 //! Used by Cluster to create internal clients for each model.
 
-use crate::provider::Provider;
+use crate::data::Provider;
 
 /// Connection settings for a single model.
 #[derive(Debug, Clone)]
@@ -35,7 +38,7 @@ impl Default for ConnectionParams {
     fn default() -> Self {
         Self {
             provider: Provider::Ollama,
-            host: String::new(),
+            host: "http://localhost:11434".into(),
             model: String::new(),
             temperature: None,
             seed: None,

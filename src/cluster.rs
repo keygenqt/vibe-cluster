@@ -1,18 +1,25 @@
+// SPDX-FileCopyrightText: 2026 Vitaliy Zarubin <keygenqt@yandex.ru>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Model cluster for distributing prompts across multiple LLM providers.
 //! Creates internal clients from connection parameters and handles
 //! prompt distribution, retries, and progress reporting.
 
 use std::sync::Arc;
+use std::time::Instant;
 
 use tokio::sync::Mutex;
 
-use crate::clients::client::Client;
+use crate::cancel::CancelToken;
+use crate::client::Client;
+use crate::clients;
+use crate::data::BatchOptions;
+use crate::data::ConnectionParams;
+use crate::data::Prompt;
+use crate::data::PromptEvent;
+use crate::data::PromptResult;
+use crate::data::Provider;
 use crate::error::ClusterError;
-use crate::options::BatchOptions;
-use crate::params::ConnectionParams;
-use crate::provider::Provider;
-use crate::result::PromptResult;
-use crate::{Prompt, clients};
 
 /// Model cluster that manages multiple LLM connections.
 pub struct Cluster {
@@ -119,6 +126,102 @@ impl Cluster {
             .ok_or(ClusterError::AllFailed("No response from cluster".into()))
     }
 
+    /// Streams one prompt through the best available client (local
+    /// models first, loaded models first). Thinking and text deltas go
+    /// to `on_event` as they arrive, the aggregated `PromptResult`
+    /// comes back. Cancellation cuts the stream: the result carries
+    /// `ClusterError::Cancelled` and whatever arrived before the cut.
+    /// One attempt — no retries.
+    pub async fn call_stream<F>(
+        &self,
+        prompt: Prompt,
+        cancel: &CancelToken,
+        on_event: F,
+    ) -> Result<PromptResult, ClusterError>
+    where
+        F: Fn(&PromptEvent) + Send + Sync + 'static,
+    {
+        // The same selection as the batch path: reachable, sorted, vision-filtered.
+        let active_clients = self
+            .prepare_clients(std::slice::from_ref(&prompt), &BatchOptions::default())
+            .await?;
+        let client = active_clients[0].clone();
+
+        let (provider, model_name, host) = {
+            let guard = client.lock().await;
+            (
+                guard.provider(),
+                guard.model_name().to_string(),
+                guard.host().to_string(),
+            )
+        };
+
+        let start = Instant::now();
+        let raw_cancel = cancel.raw();
+
+        // Cancellation also covers connection and response-header waiting.
+        let mut receiver = if cancel.is_cancelled() {
+            None
+        } else {
+            let guard = client.lock().await;
+            tokio::select! {
+                _ = raw_cancel.cancelled() => None,
+                receiver = guard.call_stream(&prompt) => Some(receiver?),
+            }
+        };
+
+        let mut thinking = String::new();
+        let mut text = String::new();
+        let mut stream_error = None;
+
+        if let Some(receiver) = receiver.as_mut() {
+            let cancelled = raw_cancel.cancelled();
+            tokio::pin!(cancelled);
+
+            loop {
+                tokio::select! {
+                    _ = &mut cancelled => break,
+                    event = receiver.recv() => match event {
+                        Some(Ok(PromptEvent::Thinking(chunk))) => {
+                            thinking.push_str(&chunk);
+                            on_event(&PromptEvent::Thinking(chunk));
+                        }
+                        Some(Ok(PromptEvent::Text(chunk))) => {
+                            text.push_str(&chunk);
+                            on_event(&PromptEvent::Text(chunk));
+                        }
+                        Some(Err(error)) => {
+                            stream_error = Some(error);
+                            break;
+                        }
+                        None => break,
+                    },
+                }
+            }
+        }
+
+        let error = if cancel.is_cancelled() {
+            Some(ClusterError::Cancelled)
+        } else {
+            stream_error
+        };
+
+        Ok(PromptResult {
+            prompt,
+            provider,
+            host,
+            model: model_name,
+            duration_ms: start.elapsed().as_millis() as u64,
+            thinking: if thinking.is_empty() {
+                None
+            } else {
+                Some(thinking)
+            },
+            text: if text.is_empty() { None } else { Some(text) },
+            error,
+        })
+    }
+
     /// Send multiple prompts with default options.
     /// Calls `on_progress(result, current, total)` after each completed prompt.
     pub async fn batch_call<F>(
@@ -182,6 +285,33 @@ impl Cluster {
                     }
                     let prompt = &prompts[idx];
 
+                    // A cancelled token fills the remaining slots with
+                    // Cancelled results instead of dropping them
+                    if options.cancel.is_cancelled() {
+                        let (provider, model_name, host) = {
+                            let guard = client_arc.lock().await;
+                            (
+                                guard.provider(),
+                                guard.model_name().to_string(),
+                                guard.host().to_string(),
+                            )
+                        };
+                        let result = PromptResult {
+                            prompt: prompt.clone(),
+                            provider,
+                            host,
+                            model: model_name,
+                            duration_ms: 0,
+                            thinking: None,
+                            text: None,
+                            error: Some(ClusterError::Cancelled),
+                        };
+                        let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                        on_progress(&result, done, total);
+                        results.lock().await[idx] = Some(result);
+                        continue;
+                    }
+
                     // Extract static metadata upfront to ensure it's available for error reports
                     let (provider, model_name, host) = {
                         let guard = client_arc.lock().await;
@@ -211,7 +341,10 @@ impl Cluster {
                         } else {
                             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
                             let guard = client_arc.lock().await;
-                            match guard.execute(prompt, options.retries.unwrap_or(1)).await {
+                            match guard
+                                .execute(prompt, options.retries.unwrap_or(1), &options.cancel)
+                                .await
+                            {
                                 Ok(r) => r,
                                 Err(e) => PromptResult {
                                     prompt: prompt.clone(),
@@ -227,7 +360,10 @@ impl Cluster {
                         }
                     } else {
                         let guard = client_arc.lock().await;
-                        match guard.execute(prompt, options.retries.unwrap_or(1)).await {
+                        match guard
+                            .execute(prompt, options.retries.unwrap_or(1), &options.cancel)
+                            .await
+                        {
                             Ok(r) => r,
                             Err(e) => PromptResult {
                                 prompt: prompt.clone(),
@@ -287,13 +423,13 @@ impl Cluster {
         prompts: &[Prompt],
         options: &BatchOptions,
     ) -> Result<Vec<Arc<Mutex<Box<dyn Client>>>>, ClusterError> {
-        // Filter the initial client list based on options
-        let active_clients: Vec<_> = self
-            .clients
-            .iter()
-            .filter(|c| options.matches_client(c))
-            .cloned()
-            .collect();
+        // A busy client still matches static filters; wait for its metadata.
+        let mut active_clients = Vec::new();
+        for client in &self.clients {
+            if options.matches_client(client).await {
+                active_clients.push(client.clone());
+            }
+        }
 
         // Check availability in parallel to avoid sequential network bottlenecks
         let mut tasks = Vec::new();
@@ -348,7 +484,9 @@ impl Cluster {
         active_clients = with_meta.into_iter().map(|(c, _, _)| c).collect();
 
         // Filter for vision capabilities if any prompt contains images
-        let has_images = prompts.iter().any(|p| p.images.is_some());
+        let has_images = prompts
+            .iter()
+            .any(|p| p.images.as_ref().is_some_and(|images| !images.is_empty()));
         if has_images {
             let mut vision_clients = Vec::new();
             for client in &active_clients {

@@ -1,3 +1,6 @@
+// SPDX-FileCopyrightText: 2026 Vitaliy Zarubin <keygenqt@yandex.ru>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Response normalization utilities.
 //! Extract JSON from markdown fences, fix malformed JSON, return text as-is otherwise.
 
@@ -31,10 +34,16 @@ pub fn normalize_text(raw: &str) -> String {
         return content;
     }
 
+    // Valid JSON may contain markdown markers inside strings.
+    if serde_json::from_str::<serde_json::Value>(&content).is_ok() {
+        return content;
+    }
+
     if !content.starts_with('[')
         && !content.starts_with('{')
         && !content.starts_with("```[")
         && !content.starts_with("```{")
+        && !content.starts_with("```json")
         && !content.starts_with("```\n[")
         && !content.starts_with("```\n{")
     {
@@ -99,17 +108,4 @@ pub fn normalize_text(raw: &str) -> String {
     }
 
     json
-}
-
-/// Formats the error with its source chain: reqwest reports only the
-/// top-level message, the TLS/network cause sits deeper.
-pub(crate) fn error_chain(error: &dyn std::error::Error) -> String {
-    let mut chain = error.to_string();
-    let mut source = error.source();
-    while let Some(cause) = source {
-        chain.push_str(" <- ");
-        chain.push_str(&cause.to_string());
-        source = cause.source();
-    }
-    chain
 }

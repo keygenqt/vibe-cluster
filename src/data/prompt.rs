@@ -1,5 +1,18 @@
+// SPDX-FileCopyrightText: 2026 Vitaliy Zarubin <keygenqt@yandex.ru>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Prompt structure for cluster communication.
 //! Contains the text to send and an optional key for response matching.
+
+/// The author of a conversation message; serializes lowercase for the wire.
+#[derive(Debug, Clone, Copy, PartialEq, serde::Serialize)]
+#[serde(rename_all = "lowercase")]
+pub enum Role {
+    /// A message of the user.
+    User,
+    /// A message of the model.
+    Assistant,
+}
 
 #[derive(Debug, Clone)]
 pub struct Prompt {
@@ -19,8 +32,8 @@ pub struct Prompt {
 /// One prior turn of the conversation.
 #[derive(Debug, Clone)]
 pub struct HistoryMessage {
-    /// The author of the message: "user" or "assistant".
-    pub role: String,
+    /// The author of the message.
+    pub role: Role,
     /// The message text.
     pub content: String,
 }
@@ -29,7 +42,7 @@ impl HistoryMessage {
     /// A message of the user.
     pub fn user(content: impl Into<String>) -> Self {
         Self {
-            role: "user".into(),
+            role: Role::User,
             content: content.into(),
         }
     }
@@ -37,7 +50,7 @@ impl HistoryMessage {
     /// A message of the model.
     pub fn assistant(content: impl Into<String>) -> Self {
         Self {
-            role: "assistant".into(),
+            role: Role::Assistant,
             content: content.into(),
         }
     }

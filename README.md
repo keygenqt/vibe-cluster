@@ -18,6 +18,8 @@ One API, multiple providers, zero coordination overhead.
 - Parallel execution with automatic worker distribution
 - Per-prompt results with provider info, timing, and error details
 - Automatic retry on network errors and server failures (5xx)
+- Streaming responses: thinking and text deltas as they arrive, via `call_stream`
+- Cancellation: `CancelToken` cuts in-flight requests and the rest of a batch
 - Model filtering: local only, cloud only, or specific models by name
 - Exclusive mode: eject and reload model between prompts for clean context
 - Smart worker selection: local models first, loaded models first
@@ -60,12 +62,12 @@ let connections = vec![
 let cluster = Cluster::new(connections).unwrap();
 
 // Single prompt
-let prompt = Prompt::new("Explain async/await in Rust");
+let prompt = Prompt::new("Explain async/await in Rust", None, None);
 let result = cluster.call(prompt).await.unwrap();
 println!("{}", result.text.unwrap());
 
 // Prompt with key for response matching
-let prompt = Prompt::new_with_key("Analyze this code", "src/main.rs");
+let prompt = Prompt::new_with_key("src/main.rs", "Analyze this code", None, None);
 
 // Prompt with images for vision models
 let prompt = Prompt {
@@ -73,6 +75,7 @@ let prompt = Prompt {
     system: None,
     key: None,
     images: Some(vec!["iVBORw0KGgo...".into()]),
+    history: Vec::new(),
 };
 
 // Single prompt with custom options
@@ -90,7 +93,7 @@ let result = cluster
 // Batch with progress
 let prompts: Vec<Prompt> = files
     .iter()
-    .map(|f| Prompt::new_with_key(build_prompt(f), f.path))
+    .map(|f| Prompt::new_with_key(f.path.clone(), build_prompt(f), None, None))
     .collect();
 let results = cluster
     .batch_call(&prompts, |result, done, total| {
@@ -103,6 +106,7 @@ let results = cluster
 | Provider | Type  | API                                                 | Vision (models)                       |
 | -------- | ----- | --------------------------------------------------- | ------------------------------------- |
 | Ollama   | Local | Native `/api/generate`                              | ✓ auto-detected via `/api/show`       |
+| OpenAI   | Cloud | OpenAI-compatible `/v1` (api.openai.com by default) | ✓ `gpt-4o*`, `gpt-4.1*`, `o1`, `o3`   |
 | DeepSeek | Cloud | OpenAI-compatible `/v1`                             | –                                     |
 | Qwen     | Cloud | OpenAI-compatible `/v1`                             | ✓ `qwen-vl-*`, `qvq-*`, `qwen-omni-*` |
 | Moonshot | Cloud | OpenAI-compatible `/v1`                             | ✓ `*-vision-preview`, `kimi-latest`   |

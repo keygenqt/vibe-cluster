@@ -1,12 +1,16 @@
+// SPDX-FileCopyrightText: 2026 Vitaliy Zarubin <keygenqt@yandex.ru>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Prompt execution result returned by Cluster.
 //! Contains response text, provider info, timing, and optional error.
 
-use crate::{Prompt, error::ClusterError, provider::Provider};
+use crate::data::{Prompt, Provider};
+use crate::error::ClusterError;
 
 /// Result of a single prompt execution.
 #[derive(Debug)]
 pub struct PromptResult {
-    /// Provider that handled this prompt.
+    /// The prompt that produced this result.
     pub prompt: Prompt,
     /// Provider that handled this prompt.
     pub provider: Provider,

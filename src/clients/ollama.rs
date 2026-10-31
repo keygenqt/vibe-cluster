@@ -1,18 +1,25 @@
+// SPDX-FileCopyrightText: 2026 Vitaliy Zarubin <keygenqt@yandex.ru>
+// SPDX-License-Identifier: Apache-2.0
+
 //! Ollama API client implementation.
 //! Uses Ollama's native /api/generate endpoint.
 
 use std::time::Duration;
 
 use async_trait::async_trait;
+use futures_util::StreamExt;
 use reqwest::Client as HttpClient;
+use reqwest::Response;
+use tokio::sync::mpsc;
 
-use crate::Prompt;
-use crate::clients::client::Client;
-use crate::clients::vision;
+use crate::client::Client;
+use crate::data::ConnectionParams;
+use crate::data::ModelInfo;
+use crate::data::Prompt;
+use crate::data::PromptEvent;
+use crate::data::Provider;
 use crate::error::ClusterError;
-use crate::models::ModelInfo;
-use crate::params::ConnectionParams;
-use crate::provider::Provider;
+use crate::support::strip_data_uri;
 
 /// Client for interacting with Ollama API.
 #[derive(Clone)]
@@ -259,6 +266,21 @@ impl Client for OllamaClient {
             self.call_chat(prompt).await
         }
     }
+
+    /// Streams the response: Ollama sends NDJSON chunks with
+    /// stream=true. HTTP errors before the stream keep the Err
+    /// return; a transport error mid-stream is sent through the channel
+    /// before it closes.
+    async fn call_stream(
+        &self,
+        prompt: &Prompt,
+    ) -> Result<mpsc::Receiver<Result<PromptEvent, ClusterError>>, ClusterError> {
+        if prompt.history.is_empty() {
+            self.stream_generate(prompt).await
+        } else {
+            self.stream_chat(prompt).await
+        }
+    }
 }
 
 /// Builds a model error from a failed HTTP response body, digging
@@ -269,17 +291,26 @@ fn http_model_error(status: reqwest::StatusCode, body_text: &str) -> ClusterErro
         if let Some(error_payload) = top_json["error"].as_str() {
             if let Ok(inner_json) = serde_json::from_str::<serde_json::Value>(error_payload) {
                 if let Some(msg) = inner_json["error"]["message"].as_str() {
-                    return ClusterError::Model(format!("HTTP {} - {}", status, msg));
+                    return ClusterError::HttpStatus {
+                        status: status.as_u16(),
+                        message: msg.to_string(),
+                    };
                 }
             }
         } else if let Some(msg) = top_json["error"]["message"]
             .as_str()
             .or_else(|| top_json["error"].as_str())
         {
-            return ClusterError::Model(format!("HTTP {} - {}", status, msg));
+            return ClusterError::HttpStatus {
+                status: status.as_u16(),
+                message: msg.to_string(),
+            };
         }
     }
-    ClusterError::Model(format!("HTTP {} - {}", status, body_text))
+    ClusterError::HttpStatus {
+        status: status.as_u16(),
+        message: body_text.to_string(),
+    }
 }
 
 /// Ollama reports full model names in /api/ps (e.g. "llava:latest"),
@@ -315,10 +346,7 @@ impl OllamaClient {
 
         if let Some(images) = &prompt.images {
             // Ollama wants raw base64 without a data: URI prefix
-            let raw: Vec<&str> = images
-                .iter()
-                .map(|img| vision::strip_data_uri(img))
-                .collect();
+            let raw: Vec<&str> = images.iter().map(|img| strip_data_uri(img)).collect();
             request["images"] = serde_json::to_value(raw).unwrap_or_default();
         }
 
@@ -341,12 +369,17 @@ impl OllamaClient {
         let mut full_response = String::new();
         let mut thinking_response = String::new();
         let mut hit_token_limit = false;
+        let mut saw_json_chunk = false;
+        let mut has_response_node = false;
 
         // Deserializer chunk loop iterator processing
         let stream =
             serde_json::Deserializer::from_str(&body_text).into_iter::<serde_json::Value>();
         for value in stream {
             if let Ok(json_chunk) = value {
+                saw_json_chunk = true;
+                has_response_node |= json_chunk.get("response").is_some();
+
                 if let Some(reason) = json_chunk["done_reason"].as_str() {
                     if reason == "length" {
                         hit_token_limit = true;
@@ -368,8 +401,14 @@ impl OllamaClient {
             )));
         }
 
-        // Fallback block for non-standard plain text response envelopes
-        if full_response.is_empty() && !body_text.contains("\"response\":\"\"") {
+        if !has_response_node {
+            if saw_json_chunk || body_text.trim().is_empty() {
+                return Err(ClusterError::Parse(
+                    "Ollama response misses the response node".into(),
+                ));
+            }
+
+            // Fallback block for non-standard plain text response envelopes
             full_response = body_text;
         }
 
@@ -396,10 +435,7 @@ impl OllamaClient {
         let mut last = serde_json::json!({ "role": "user", "content": prompt.user });
         if let Some(images) = &prompt.images {
             // Ollama wants raw base64 without a data: URI prefix
-            let raw: Vec<&str> = images
-                .iter()
-                .map(|img| vision::strip_data_uri(img))
-                .collect();
+            let raw: Vec<&str> = images.iter().map(|img| strip_data_uri(img)).collect();
             last["images"] = serde_json::to_value(raw).unwrap_or_default();
         }
         messages.push(last);
@@ -434,6 +470,7 @@ impl OllamaClient {
         let mut full_response = String::new();
         let mut thinking_response = String::new();
         let mut hit_token_limit = false;
+        let mut has_message_node = false;
 
         // the stream chunks mirror /api/generate, content sits one
         // level deeper — under "message"
@@ -441,6 +478,8 @@ impl OllamaClient {
             serde_json::Deserializer::from_str(&body_text).into_iter::<serde_json::Value>();
         for value in stream {
             if let Ok(json_chunk) = value {
+                has_message_node |= json_chunk.get("message").is_some();
+
                 if let Some(reason) = json_chunk["done_reason"].as_str() {
                     if reason == "length" {
                         hit_token_limit = true;
@@ -460,6 +499,12 @@ impl OllamaClient {
                 "Model '{}' hit output token limit (num_predict: {}).",
                 self.model, self.num_predict
             )));
+        }
+
+        if !has_message_node {
+            return Err(ClusterError::Parse(
+                "Ollama chat response misses the message node".into(),
+            ));
         }
 
         Ok((thinking_response, full_response))
@@ -499,4 +544,185 @@ impl OllamaClient {
         }
         Ok(response.json().await?)
     }
+
+    /// Streams /api/generate with stream=true. No total timeout: a long
+    /// generation must not be cut by one; the cancel token (Cluster)
+    /// stops runaway streams.
+    async fn stream_generate(
+        &self,
+        prompt: &Prompt,
+    ) -> Result<mpsc::Receiver<Result<PromptEvent, ClusterError>>, ClusterError> {
+        let url = format!("{}/api/generate", self.host);
+        let mut request = serde_json::json!({
+            "model": self.model,
+            "prompt": prompt.user,
+            "stream": true,
+            "options": {
+                "temperature": self.temperature,
+                "seed": self.seed,
+                "num_ctx": self.num_ctx,
+                "num_predict": self.num_predict,
+            }
+        });
+
+        if let Some(system) = &prompt.system {
+            request["system"] = serde_json::Value::String(system.to_string());
+        }
+
+        if let Some(images) = &prompt.images {
+            // Ollama wants raw base64 without a data: URI prefix
+            let raw: Vec<&str> = images.iter().map(|img| strip_data_uri(img)).collect();
+            request["images"] = serde_json::to_value(raw).unwrap_or_default();
+        }
+
+        let response = self.client.post(&url).json(&request).send().await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body_text = response.text().await?;
+            return Err(http_model_error(status, &body_text));
+        }
+
+        Ok(spawn_ollama_chunk_forwarder(response, false))
+    }
+
+    /// Streams /api/chat with stream=true — same chunk flow as
+    /// /api/generate, see `stream_generate`.
+    async fn stream_chat(
+        &self,
+        prompt: &Prompt,
+    ) -> Result<mpsc::Receiver<Result<PromptEvent, ClusterError>>, ClusterError> {
+        let url = format!("{}/api/chat", self.host);
+        let mut messages = Vec::new();
+
+        if let Some(system) = &prompt.system {
+            messages.push(serde_json::json!({ "role": "system", "content": system }));
+        }
+
+        for message in &prompt.history {
+            messages.push(serde_json::json!({
+                "role": message.role,
+                "content": message.content,
+            }));
+        }
+
+        let mut last = serde_json::json!({ "role": "user", "content": prompt.user });
+        if let Some(images) = &prompt.images {
+            // Ollama wants raw base64 without a data: URI prefix
+            let raw: Vec<&str> = images.iter().map(|img| strip_data_uri(img)).collect();
+            last["images"] = serde_json::to_value(raw).unwrap_or_default();
+        }
+        messages.push(last);
+
+        let request = serde_json::json!({
+            "model": self.model,
+            "messages": messages,
+            "stream": true,
+            "options": {
+                "temperature": self.temperature,
+                "seed": self.seed,
+                "num_ctx": self.num_ctx,
+                "num_predict": self.num_predict,
+            }
+        });
+
+        let response = self.client.post(&url).json(&request).send().await?;
+
+        let status = response.status();
+        if !status.is_success() {
+            let body_text = response.text().await?;
+            return Err(http_model_error(status, &body_text));
+        }
+
+        Ok(spawn_ollama_chunk_forwarder(response, true))
+    }
+}
+
+/// Forwards Ollama NDJSON chunks into the event channel; the channel
+/// closes on stream end or transport error. `chat` selects the chunk
+/// shape: /api/chat nests thinking/content under "message".
+fn spawn_ollama_chunk_forwarder(
+    response: Response,
+    chat: bool,
+) -> mpsc::Receiver<Result<PromptEvent, ClusterError>> {
+    let (sender, receiver) = mpsc::channel(16);
+
+    tokio::spawn(async move {
+        let mut buffer = Vec::new();
+        let mut stream = response.bytes_stream();
+
+        while let Some(chunk) = stream.next().await {
+            let bytes = match chunk {
+                Ok(bytes) => bytes,
+                Err(error) => {
+                    log::error!("Ollama stream failed: {}", error);
+                    let _ = sender.send(Err(ClusterError::Http(error))).await;
+                    return;
+                }
+            };
+            buffer.extend_from_slice(&bytes);
+
+            // TCP chunks may split mid-line — decode only complete NDJSON lines.
+            while let Some(pos) = buffer.iter().position(|byte| *byte == b'\n') {
+                let line: Vec<u8> = buffer.drain(..=pos).collect();
+                if !forward_ollama_line(&sender, &line, chat).await {
+                    return;
+                }
+            }
+        }
+
+        // A server may omit the final newline.
+        if !buffer.is_empty() {
+            let line = std::mem::take(&mut buffer);
+            let _ = forward_ollama_line(&sender, &line, chat).await;
+        }
+    });
+
+    receiver
+}
+
+/// Forwards one complete NDJSON line; false requests stream termination.
+async fn forward_ollama_line(
+    sender: &mpsc::Sender<Result<PromptEvent, ClusterError>>,
+    line: &[u8],
+    chat: bool,
+) -> bool {
+    let line = String::from_utf8_lossy(line);
+    let Ok(json) = serde_json::from_str::<serde_json::Value>(line.trim()) else {
+        return true;
+    };
+
+    if json["done_reason"].as_str() == Some("length") {
+        log::warn!("Ollama stream hit the output token limit");
+    }
+
+    let (thinking, text) = if chat {
+        (
+            json["message"]["thinking"].as_str(),
+            json["message"]["content"].as_str(),
+        )
+    } else {
+        (json["thinking"].as_str(), json["response"].as_str())
+    };
+
+    if let Some(text) = thinking {
+        if sender
+            .send(Ok(PromptEvent::Thinking(text.to_string())))
+            .await
+            .is_err()
+        {
+            return false;
+        }
+    }
+    if let Some(text) = text {
+        if sender
+            .send(Ok(PromptEvent::Text(text.to_string())))
+            .await
+            .is_err()
+        {
+            return false;
+        }
+    }
+
+    true
 }
