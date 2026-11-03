@@ -48,6 +48,7 @@ pub struct GigaChatClient {
     seed: u64,
     num_predict: usize,
     timeout_secs: u64,
+    stats: bool,
 }
 
 #[async_trait]
@@ -60,6 +61,11 @@ impl Client for GigaChatClient {
     /// Returns Provider::GigaChat.
     fn provider(&self) -> Provider {
         Provider::GigaChat
+    }
+
+    /// Whether token counting is enabled for this connection.
+    fn stats(&self) -> bool {
+        self.stats
     }
 
     /// Returns the model name (e.g. "GigaChat", "GigaChat-Pro").
@@ -329,6 +335,7 @@ impl GigaChatClient {
             seed: params.seed.unwrap_or(42),
             num_predict: params.num_predict.unwrap_or(2048),
             timeout_secs: params.timeout_secs.unwrap_or(120),
+            stats: params.stats,
         }
     }
 

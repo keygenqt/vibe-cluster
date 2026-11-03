@@ -26,4 +26,10 @@ pub struct PromptResult {
     pub text: Option<String>,
     /// Error if the prompt failed after all retries.
     pub error: Option<ClusterError>,
+    /// Estimated prompt tokens (user + system + history); 0 when
+    /// `ConnectionParams.stats` is off.
+    pub prompt_tokens: usize,
+    /// Estimated completion tokens (text + thinking); `None` when
+    /// `ConnectionParams.stats` is off or there is no answer.
+    pub completion_tokens: Option<usize>,
 }

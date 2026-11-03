@@ -15,6 +15,8 @@ use crate::data::PromptEvent;
 use crate::data::PromptResult;
 use crate::data::Provider;
 use crate::error::ClusterError;
+use crate::tokens::count_prompt_tokens;
+use crate::tokens::count_tokens;
 
 /// Client trait — one implementation per provider API.
 #[async_trait]
@@ -24,6 +26,9 @@ pub trait Client: Send + Sync {
 
     /// Provider type for this client.
     fn provider(&self) -> Provider;
+
+    /// Whether this client counts tokens into `PromptResult`.
+    fn stats(&self) -> bool;
 
     /// Model name for this client.
     fn model_name(&self) -> &str;
@@ -97,6 +102,14 @@ pub trait Client: Send + Sync {
 
             match raw {
                 Ok((thinking_text, response_text)) => {
+                    let (prompt_tokens, completion_tokens) = if self.stats() {
+                        (
+                            count_prompt_tokens(prompt),
+                            Some(count_tokens(&thinking_text) + count_tokens(&response_text)),
+                        )
+                    } else {
+                        (0, None)
+                    };
                     return Ok(PromptResult {
                         prompt: prompt.clone(),
                         provider: self.provider(),
@@ -110,6 +123,8 @@ pub trait Client: Send + Sync {
                         },
                         text: Some(response_text),
                         error: None,
+                        prompt_tokens,
+                        completion_tokens,
                     });
                 }
                 Err(e) => {

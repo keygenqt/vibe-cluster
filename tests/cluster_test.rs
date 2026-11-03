@@ -475,3 +475,59 @@ async fn test_batch_cancel() {
         );
     }
 }
+
+#[tokio::test]
+async fn test_stats_flag_counts_tokens() {
+    let payload = r#"{"choices":[{"message":{"content":"Hello 👋"}}]}"#;
+    let (host, server) = mock_server(
+        "200 OK",
+        "application/json",
+        vec![payload.as_bytes().to_vec()],
+    )
+    .await;
+    let client = create_client(ConnectionParams {
+        provider: Provider::OpenAI,
+        host,
+        model: "gpt-4o".into(),
+        stats: true,
+        ..Default::default()
+    });
+
+    let result = client
+        .execute(&Prompt::new("test", None, None), 1, &CancelToken::new())
+        .await
+        .unwrap();
+    server.await.unwrap();
+
+    assert!(result.prompt_tokens > 0);
+    assert_eq!(
+        result.completion_tokens,
+        Some(vibe_cluster::count_tokens("Hello 👋"))
+    );
+}
+
+#[tokio::test]
+async fn test_stats_default_counts_nothing() {
+    let payload = r#"{"choices":[{"message":{"content":"Hello 👋"}}]}"#;
+    let (host, server) = mock_server(
+        "200 OK",
+        "application/json",
+        vec![payload.as_bytes().to_vec()],
+    )
+    .await;
+    let client = create_client(ConnectionParams {
+        provider: Provider::OpenAI,
+        host,
+        model: "gpt-4o".into(),
+        ..Default::default()
+    });
+
+    let result = client
+        .execute(&Prompt::new("test", None, None), 1, &CancelToken::new())
+        .await
+        .unwrap();
+    server.await.unwrap();
+
+    assert_eq!(result.prompt_tokens, 0);
+    assert_eq!(result.completion_tokens, None);
+}

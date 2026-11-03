@@ -41,6 +41,7 @@ pub struct OpenAiClient {
     provider: Provider,
     /// Vision capability, detected once at construction (name-based).
     vision: bool,
+    stats: bool,
 }
 
 #[async_trait]
@@ -53,6 +54,11 @@ impl Client for OpenAiClient {
     /// Returns the provider set at creation (OpenAI, DeepSeek, Qwen, etc.).
     fn provider(&self) -> Provider {
         self.provider
+    }
+
+    /// Whether token counting is enabled for this connection.
+    fn stats(&self) -> bool {
+        self.stats
     }
 
     /// Returns the model name (e.g. "gpt-4o", "deepseek-chat", "qwen-max").
@@ -435,6 +441,7 @@ impl OpenAiClient {
             timeout_secs: params.timeout_secs.unwrap_or(120),
             provider: params.provider,
             vision,
+            stats: params.stats,
         }
     }
 }

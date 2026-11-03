@@ -31,6 +31,8 @@ pub struct ConnectionParams {
     pub project: Option<String>,
     /// Number of parallel connections to this provider (default 1).
     pub parallel: usize,
+    /// Count tokens of the prompt and the answer into `PromptResult`.
+    pub stats: bool,
 }
 
 /// Default connection: Ollama on localhost with 120s timeout, no model set.
@@ -48,6 +50,7 @@ impl Default for ConnectionParams {
             api_key: None,
             project: None,
             parallel: 1,
+            stats: false,
         }
     }
 }

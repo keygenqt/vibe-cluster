@@ -32,6 +32,7 @@ pub struct OllamaClient {
     num_ctx: usize,
     num_predict: usize,
     timeout_secs: u64,
+    stats: bool,
 }
 
 #[async_trait]
@@ -44,6 +45,11 @@ impl Client for OllamaClient {
     /// Returns Provider::Ollama.
     fn provider(&self) -> Provider {
         Provider::Ollama
+    }
+
+    /// Whether token counting is enabled for this connection.
+    fn stats(&self) -> bool {
+        self.stats
     }
 
     /// Returns the model name (e.g. "qwen2.5-coder:3b-instruct").
@@ -522,6 +528,7 @@ impl OllamaClient {
             num_ctx: params.num_ctx.unwrap_or(4096),
             num_predict: params.num_predict.unwrap_or(2048),
             timeout_secs: params.timeout_secs.unwrap_or(120),
+            stats: params.stats,
         }
     }
 

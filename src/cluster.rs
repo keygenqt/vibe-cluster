@@ -20,6 +20,8 @@ use crate::data::PromptEvent;
 use crate::data::PromptResult;
 use crate::data::Provider;
 use crate::error::ClusterError;
+use crate::tokens::count_prompt_tokens;
+use crate::tokens::count_tokens;
 
 /// Model cluster that manages multiple LLM connections.
 pub struct Cluster {
@@ -147,12 +149,13 @@ impl Cluster {
             .await?;
         let client = active_clients[0].clone();
 
-        let (provider, model_name, host) = {
+        let (provider, model_name, host, stats) = {
             let guard = client.lock().await;
             (
                 guard.provider(),
                 guard.model_name().to_string(),
                 guard.host().to_string(),
+                guard.stats(),
             )
         };
 
@@ -206,6 +209,15 @@ impl Cluster {
             stream_error
         };
 
+        let (prompt_tokens, completion_tokens) = if stats {
+            (
+                count_prompt_tokens(&prompt),
+                Some(count_tokens(&thinking) + count_tokens(&text)),
+            )
+        } else {
+            (0, None)
+        };
+
         Ok(PromptResult {
             prompt,
             provider,
@@ -219,6 +231,8 @@ impl Cluster {
             },
             text: if text.is_empty() { None } else { Some(text) },
             error,
+            prompt_tokens,
+            completion_tokens,
         })
     }
 
@@ -288,12 +302,13 @@ impl Cluster {
                     // A cancelled token fills the remaining slots with
                     // Cancelled results instead of dropping them
                     if options.cancel.is_cancelled() {
-                        let (provider, model_name, host) = {
+                        let (provider, model_name, host, stats) = {
                             let guard = client_arc.lock().await;
                             (
                                 guard.provider(),
                                 guard.model_name().to_string(),
                                 guard.host().to_string(),
+                                guard.stats(),
                             )
                         };
                         let result = PromptResult {
@@ -305,6 +320,12 @@ impl Cluster {
                             thinking: None,
                             text: None,
                             error: Some(ClusterError::Cancelled),
+                            prompt_tokens: if stats {
+                                count_prompt_tokens(prompt)
+                            } else {
+                                0
+                            },
+                            completion_tokens: None,
                         };
                         let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                         on_progress(&result, done, total);
@@ -313,12 +334,13 @@ impl Cluster {
                     }
 
                     // Extract static metadata upfront to ensure it's available for error reports
-                    let (provider, model_name, host) = {
+                    let (provider, model_name, host, stats) = {
                         let guard = client_arc.lock().await;
                         (
                             guard.provider(),
                             guard.model_name().to_string(),
                             guard.host().to_string(),
+                            guard.stats(),
                         )
                     };
 
@@ -337,6 +359,12 @@ impl Cluster {
                                 thinking: None,
                                 text: None,
                                 error: Some(e),
+                                prompt_tokens: if stats {
+                                    count_prompt_tokens(prompt)
+                                } else {
+                                    0
+                                },
+                                completion_tokens: None,
                             }
                         } else {
                             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
@@ -355,6 +383,12 @@ impl Cluster {
                                     thinking: None,
                                     text: None,
                                     error: Some(e),
+                                    prompt_tokens: if stats {
+                                        count_prompt_tokens(prompt)
+                                    } else {
+                                        0
+                                    },
+                                    completion_tokens: None,
                                 },
                             }
                         }
@@ -374,6 +408,12 @@ impl Cluster {
                                 thinking: None,
                                 text: None,
                                 error: Some(e),
+                                prompt_tokens: if stats {
+                                    count_prompt_tokens(prompt)
+                                } else {
+                                    0
+                                },
+                                completion_tokens: None,
                             },
                         }
                     };

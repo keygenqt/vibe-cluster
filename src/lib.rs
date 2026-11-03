@@ -61,6 +61,7 @@
 //! - `error` — the failure contract.
 //! - `normalize` — response normalization helpers.
 //! - `support` — shared client helpers (vision, image payloads).
+//! - `tokens` — token counting.
 
 mod cancel;
 mod client;
@@ -70,6 +71,7 @@ mod data;
 mod error;
 mod normalize;
 mod support;
+mod tokens;
 
 pub use cancel::CancelToken;
 pub use client::Client;
@@ -89,4 +91,6 @@ pub use data::PromptResult;
 pub use data::Provider;
 pub use data::Role;
 pub use error::ClusterError;
+
 pub use normalize::normalize_text;
+pub use tokens::count_tokens;
