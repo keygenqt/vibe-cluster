@@ -523,10 +523,12 @@ impl Cluster {
         with_meta.sort_by(|a, b| b.1.cmp(&a.1).then(b.2.cmp(&a.2)));
         active_clients = with_meta.into_iter().map(|(c, _, _)| c).collect();
 
-        // Filter for vision capabilities if any prompt contains images
-        let has_images = prompts
-            .iter()
-            .any(|p| p.images.as_ref().is_some_and(|images| !images.is_empty()));
+        // Filter for vision capabilities if any prompt carries images —
+        // the current turn or any history message
+        let has_images = prompts.iter().any(|p| {
+            p.images.as_ref().is_some_and(|images| !images.is_empty())
+                || p.history.iter().any(|message| !message.images.is_empty())
+        });
         if has_images {
             let mut vision_clients = Vec::new();
             for client in &active_clients {

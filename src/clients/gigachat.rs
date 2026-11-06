@@ -18,6 +18,8 @@ use crate::data::PromptEvent;
 use crate::data::Provider;
 use crate::error::ClusterError;
 use crate::error::error_chain;
+use crate::support::content_value;
+use crate::support::model_supports_vision;
 use crate::support::spawn_sse_chunk_forwarder;
 use tokio::sync::mpsc;
 
@@ -49,6 +51,8 @@ pub struct GigaChatClient {
     num_predict: usize,
     timeout_secs: u64,
     stats: bool,
+    /// Vision capability, detected once at construction (name-based).
+    vision: bool,
 }
 
 #[async_trait]
@@ -99,9 +103,11 @@ impl Client for GigaChatClient {
         Ok(false)
     }
 
-    /// No vision-capable models are served on the personal scope.
+    /// Checks if the model supports vision (image input).
+    /// Cached at construction: name-based, see support::vision —
+    /// GigaChat-2-Lite and the first-gen base models are text-only.
     async fn is_vision(&self) -> Result<bool, ClusterError> {
-        Ok(false)
+        Ok(self.vision)
     }
 
     /// Lists models on the host. GigaChat /models reports only
@@ -168,6 +174,9 @@ impl Client for GigaChatClient {
     /// Sends a prompt to the OpenAI-compatible /chat/completions endpoint.
     async fn call(&self, prompt: &Prompt) -> Result<(String, String), ClusterError> {
         let url = format!("{}/chat/completions", self.host);
+        // @todo: inline base64 in image_url is unverified for GigaChat —
+        // the documented path is a /files upload with a file_id; test
+        // live, on failure add the upload pre-step (call and call_stream).
         let mut messages = Vec::new();
 
         if let Some(system) = &prompt.system {
@@ -177,11 +186,14 @@ impl Client for GigaChatClient {
         for message in &prompt.history {
             messages.push(serde_json::json!({
                 "role": message.role,
-                "content": message.content,
+                "content": content_value(&message.content, &message.images),
             }));
         }
 
-        messages.push(serde_json::json!({ "role": "user", "content": prompt.user }));
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": content_value(&prompt.user, prompt.images.as_deref().unwrap_or(&[])),
+        }));
 
         let request = serde_json::json!({
             "model": self.model,
@@ -267,11 +279,14 @@ impl Client for GigaChatClient {
         for message in &prompt.history {
             messages.push(serde_json::json!({
                 "role": message.role,
-                "content": message.content,
+                "content": content_value(&message.content, &message.images),
             }));
         }
 
-        messages.push(serde_json::json!({ "role": "user", "content": prompt.user }));
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": content_value(&prompt.user, prompt.images.as_deref().unwrap_or(&[])),
+        }));
 
         let request = serde_json::json!({
             "model": self.model,
@@ -321,6 +336,8 @@ impl GigaChatClient {
     /// `params.api_key` holds the Authorization key (Basic credentials).
     pub fn new(params: ConnectionParams) -> Self {
         let temp = params.temperature.unwrap_or(0.7) as f64;
+        // Detect vision before moving fields out of params.
+        let vision = model_supports_vision(&Provider::GigaChat, &params.model);
         let host = if params.host.is_empty() {
             DEFAULT_API_HOST.to_string()
         } else {
@@ -336,6 +353,7 @@ impl GigaChatClient {
             num_predict: params.num_predict.unwrap_or(2048),
             timeout_secs: params.timeout_secs.unwrap_or(120),
             stats: params.stats,
+            vision,
         }
     }
 

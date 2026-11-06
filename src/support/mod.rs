@@ -13,7 +13,7 @@ mod image;
 mod sse;
 mod vision;
 
-pub(crate) use image::mime_from_base64;
+pub(crate) use image::content_value;
 pub(crate) use image::strip_data_uri;
 pub(crate) use sse::spawn_sse_chunk_forwarder;
 pub(crate) use vision::model_supports_vision;

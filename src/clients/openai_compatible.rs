@@ -18,7 +18,7 @@ use crate::data::Prompt;
 use crate::data::PromptEvent;
 use crate::data::Provider;
 use crate::error::ClusterError;
-use crate::support::mime_from_base64;
+use crate::support::content_value;
 use crate::support::model_supports_vision;
 use crate::support::spawn_sse_chunk_forwarder;
 
@@ -216,32 +216,14 @@ impl Client for OpenAiClient {
         for message in &prompt.history {
             messages.push(serde_json::json!({
                 "role": message.role,
-                "content": message.content,
+                "content": content_value(&message.content, &message.images),
             }));
         }
 
-        let user_content = if let Some(images) = &prompt.images {
-            let mut content: Vec<serde_json::Value> =
-                vec![serde_json::json!({"type": "text", "text": prompt.user})];
-            for img in images {
-                // Prompt.images accepts raw base64 or a ready-made data: URI;
-                // each client normalizes the payload for its provider.
-                let url = if img.starts_with("data:") {
-                    img.clone()
-                } else {
-                    format!("data:{};base64,{}", mime_from_base64(img), img)
-                };
-                content.push(serde_json::json!({
-                    "type": "image_url",
-                    "image_url": {"url": url}
-                }));
-            }
-            serde_json::Value::Array(content)
-        } else {
-            serde_json::Value::String(prompt.user.clone())
-        };
-
-        messages.push(serde_json::json!({ "role": "user", "content": user_content }));
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": content_value(&prompt.user, prompt.images.as_deref().unwrap_or(&[])),
+        }));
 
         let request = serde_json::json!({
             "model": self.model_uri(),
@@ -336,32 +318,14 @@ impl Client for OpenAiClient {
         for message in &prompt.history {
             messages.push(serde_json::json!({
                 "role": message.role,
-                "content": message.content,
+                "content": content_value(&message.content, &message.images),
             }));
         }
 
-        let user_content = if let Some(images) = &prompt.images {
-            let mut content: Vec<serde_json::Value> =
-                vec![serde_json::json!({"type": "text", "text": prompt.user})];
-            for img in images {
-                // Prompt.images accepts raw base64 or a ready-made data: URI;
-                // each client normalizes the payload for its provider.
-                let url = if img.starts_with("data:") {
-                    img.clone()
-                } else {
-                    format!("data:{};base64,{}", mime_from_base64(img), img)
-                };
-                content.push(serde_json::json!({
-                    "type": "image_url",
-                    "image_url": {"url": url}
-                }));
-            }
-            serde_json::Value::Array(content)
-        } else {
-            serde_json::Value::String(prompt.user.clone())
-        };
-
-        messages.push(serde_json::json!({ "role": "user", "content": user_content }));
+        messages.push(serde_json::json!({
+            "role": "user",
+            "content": content_value(&prompt.user, prompt.images.as_deref().unwrap_or(&[])),
+        }));
 
         let request = serde_json::json!({
             "model": self.model_uri(),

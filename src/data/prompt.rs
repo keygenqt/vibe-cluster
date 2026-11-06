@@ -36,6 +36,8 @@ pub struct HistoryMessage {
     pub role: Role,
     /// The message text.
     pub content: String,
+    /// Base64 images of the turn; empty for a text-only message.
+    pub images: Vec<String>,
 }
 
 impl HistoryMessage {
@@ -44,6 +46,7 @@ impl HistoryMessage {
         Self {
             role: Role::User,
             content: content.into(),
+            images: Vec::new(),
         }
     }
 
@@ -52,6 +55,7 @@ impl HistoryMessage {
         Self {
             role: Role::Assistant,
             content: content.into(),
+            images: Vec::new(),
         }
     }
 }

@@ -30,6 +30,30 @@ pub(crate) fn strip_data_uri(img: &str) -> &str {
     }
 }
 
+/// One OpenAI-compatible `content` value: a plain string, or the
+/// text+images part array when images ride along.
+pub(crate) fn content_value(text: &str, images: &[String]) -> serde_json::Value {
+    if images.is_empty() {
+        return serde_json::Value::String(text.to_string());
+    }
+    let mut content: Vec<serde_json::Value> =
+        vec![serde_json::json!({ "type": "text", "text": text })];
+    for img in images {
+        // Prompt.images accepts raw base64 or a ready-made data: URI;
+        // each client normalizes the payload for its provider.
+        let url = if img.starts_with("data:") {
+            img.clone()
+        } else {
+            format!("data:{};base64,{}", mime_from_base64(img), img)
+        };
+        content.push(serde_json::json!({
+            "type": "image_url",
+            "image_url": {"url": url}
+        }));
+    }
+    serde_json::Value::Array(content)
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

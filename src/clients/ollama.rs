@@ -19,6 +19,7 @@ use crate::data::Prompt;
 use crate::data::PromptEvent;
 use crate::data::Provider;
 use crate::error::ClusterError;
+use crate::support::model_supports_vision;
 use crate::support::strip_data_uri;
 
 /// Client for interacting with Ollama API.
@@ -151,7 +152,11 @@ impl Client for OllamaClient {
         // projector_info is a TOP-LEVEL field of /api/show, next to model_info
         let has_projector = json["projector_info"].is_object();
 
-        Ok(has_vision_family || has_projector)
+        // The last tier: the name-based heuristic — a known name on an
+        // old server whose family list we do not recognize yet.
+        Ok(has_vision_family
+            || has_projector
+            || model_supports_vision(&Provider::Ollama, &self.model))
     }
 
     /// Lists all models on the host. Static facts come from /api/tags;
@@ -432,10 +437,20 @@ impl OllamaClient {
         }
 
         for message in &prompt.history {
-            messages.push(serde_json::json!({
+            let mut message_json = serde_json::json!({
                 "role": message.role,
                 "content": message.content,
-            }));
+            });
+            if !message.images.is_empty() {
+                // Ollama wants raw base64 without a data: URI prefix
+                let raw: Vec<&str> = message
+                    .images
+                    .iter()
+                    .map(|img| strip_data_uri(img))
+                    .collect();
+                message_json["images"] = serde_json::to_value(raw).unwrap_or_default();
+            }
+            messages.push(message_json);
         }
 
         let mut last = serde_json::json!({ "role": "user", "content": prompt.user });
@@ -607,10 +622,20 @@ impl OllamaClient {
         }
 
         for message in &prompt.history {
-            messages.push(serde_json::json!({
+            let mut message_json = serde_json::json!({
                 "role": message.role,
                 "content": message.content,
-            }));
+            });
+            if !message.images.is_empty() {
+                // Ollama wants raw base64 without a data: URI prefix
+                let raw: Vec<&str> = message
+                    .images
+                    .iter()
+                    .map(|img| strip_data_uri(img))
+                    .collect();
+                message_json["images"] = serde_json::to_value(raw).unwrap_or_default();
+            }
+            messages.push(message_json);
         }
 
         let mut last = serde_json::json!({ "role": "user", "content": prompt.user });
