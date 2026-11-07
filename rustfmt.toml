@@ -1,0 +1,8 @@
+# Controls how imports are grouped.
+# NOTE: This option is only available on the nightly Rust channel.
+# Usage: rustup run nightly cargo fmt
+imports_granularity = "Item"
+
+# Update version:
+# Update changelog: git cliff --tag v0.2.0 -o CHANGELOG.md
+# Create tag: git tag v0.2.0 / git push --tags / cargo publish

@@ -5,12 +5,16 @@
 //! OAuth access token from Sber (30 min TTL, cached), then
 //! OpenAI-compatible chat completions on api.giga.chat.
 
-use std::time::{Duration, Instant};
+use std::sync::Arc;
+use std::time::Duration;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use reqwest::Client as HttpClient;
 
+use crate::capability::CapabilityRules;
 use crate::client::Client;
+use crate::data::Capabilities;
 use crate::data::ConnectionParams;
 use crate::data::ModelInfo;
 use crate::data::Prompt;
@@ -19,7 +23,6 @@ use crate::data::Provider;
 use crate::error::ClusterError;
 use crate::error::error_chain;
 use crate::support::content_value;
-use crate::support::model_supports_vision;
 use crate::support::spawn_sse_chunk_forwarder;
 use tokio::sync::mpsc;
 
@@ -42,6 +45,7 @@ pub struct GigaChatClient {
     /// unverifiable by macOS TLS stacks — the client skips the
     /// server check (the `curl -k` behavior); traffic stays encrypted.
     client: HttpClient,
+    rules: Arc<CapabilityRules>,
     host: String,
     model: String,
     /// Authorization key (Basic credentials) used to obtain access tokens.
@@ -51,8 +55,8 @@ pub struct GigaChatClient {
     num_predict: usize,
     timeout_secs: u64,
     stats: bool,
-    /// Vision capability, detected once at construction (name-based).
-    vision: bool,
+    /// Capabilities, resolved once at construction (name-based rules).
+    capabilities: Capabilities,
 }
 
 #[async_trait]
@@ -103,15 +107,16 @@ impl Client for GigaChatClient {
         Ok(false)
     }
 
-    /// Checks if the model supports vision (image input).
-    /// Cached at construction: name-based, see support::vision —
-    /// GigaChat-2-Lite and the first-gen base models are text-only.
-    async fn is_vision(&self) -> Result<bool, ClusterError> {
-        Ok(self.vision)
+    /// Returns the model capabilities.
+    /// Resolved once at construction: name-based rules — GigaChat-2-Lite
+    /// and the first-gen base models are text-only.
+    async fn capabilities(&self) -> Result<Capabilities, ClusterError> {
+        Ok(self.capabilities.clone())
     }
 
     /// Lists models on the host. GigaChat /models reports only
-    /// id/owned_by/created — capabilities stay `None`.
+    /// id/owned_by/created; capabilities come from the name rules,
+    /// embedding from the catalog `type` field.
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ClusterError> {
         let token = self.access_token().await?;
         let url = format!("{}/models", self.host);
@@ -140,7 +145,12 @@ impl Client for GigaChatClient {
             .iter()
             .filter_map(|m| {
                 let name = m["id"].as_str()?.to_string();
+                let mut capabilities = self.rules.capabilities(&Provider::GigaChat, &name);
+                // the catalog reports the kind; embedders are
+                // filtered out by the studio layer
+                capabilities.abilities.embedding = Some(m["type"].as_str() == Some("embedder"));
                 Some(ModelInfo {
+                    capabilities,
                     name,
                     digest: None,
                     remote_model: None,
@@ -155,12 +165,6 @@ impl Client for GigaChatClient {
                     quantization: None,
                     size: None,
                     context_length: None,
-                    vision: None,
-                    tools: None,
-                    thinking: None,
-                    // the catalog reports the kind; embedders are
-                    // filtered out by the studio layer
-                    embedding: Some(m["type"].as_str() == Some("embedder")),
                 })
             })
             .collect())
@@ -334,17 +338,19 @@ impl Client for GigaChatClient {
 impl GigaChatClient {
     /// Creates a new GigaChat client from connection parameters.
     /// `params.api_key` holds the Authorization key (Basic credentials).
-    pub fn new(params: ConnectionParams) -> Self {
+    pub fn new(params: ConnectionParams, rules: Arc<CapabilityRules>) -> Self {
         let temp = params.temperature.unwrap_or(0.7) as f64;
-        // Detect vision before moving fields out of params.
-        let vision = model_supports_vision(&Provider::GigaChat, &params.model);
         let host = if params.host.is_empty() {
             DEFAULT_API_HOST.to_string()
         } else {
             params.host
         };
+        // Capabilities resolve once: name-based rules are the only
+        // cloud capability source.
+        let capabilities = rules.capabilities(&Provider::GigaChat, &params.model);
         Self {
             client: Self::build_client(),
+            rules,
             host,
             model: params.model,
             auth_key: params.api_key.unwrap_or_default(),
@@ -353,7 +359,7 @@ impl GigaChatClient {
             num_predict: params.num_predict.unwrap_or(2048),
             timeout_secs: params.timeout_secs.unwrap_or(120),
             stats: params.stats,
-            vision,
+            capabilities,
         }
     }
 

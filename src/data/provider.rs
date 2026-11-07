@@ -5,7 +5,7 @@
 //! Each variant maps to a specific API implementation.
 
 /// Provider type.
-#[derive(Debug, Clone, Copy, PartialEq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Provider {
     Ollama,
     /// Any OpenAI-compatible host (api.openai.com by default): vLLM, OpenRouter, custom gateways.

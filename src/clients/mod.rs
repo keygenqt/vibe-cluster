@@ -5,6 +5,9 @@
 //! Ollama uses its own API; OpenAI-compatible covers OpenAI itself,
 //! DeepSeek, Qwen, Moonshot, Zhipu and Yandex; GigaChat uses OAuth + OpenAI-compatible.
 
+use std::sync::Arc;
+
+use crate::capability::CapabilityRules;
 use crate::client::Client;
 use crate::data::ConnectionParams;
 use crate::data::Provider;
@@ -18,15 +21,15 @@ pub use ollama::OllamaClient;
 pub use openai_compatible::OpenAiClient;
 
 /// Creates the client matching the provider kind.
-pub fn create_client(params: ConnectionParams) -> Box<dyn Client> {
+pub fn create_client(params: ConnectionParams, rules: Arc<CapabilityRules>) -> Box<dyn Client> {
     match params.provider {
-        Provider::Ollama => Box::new(OllamaClient::new(params)),
+        Provider::Ollama => Box::new(OllamaClient::new(params, rules.clone())),
         Provider::OpenAI
         | Provider::DeepSeek
         | Provider::Qwen
         | Provider::Moonshot
         | Provider::Zhipu
-        | Provider::Yandex => Box::new(OpenAiClient::new(params)),
-        Provider::GigaChat => Box::new(GigaChatClient::new(params)),
+        | Provider::Yandex => Box::new(OpenAiClient::new(params, rules.clone())),
+        Provider::GigaChat => Box::new(GigaChatClient::new(params, rules)),
     }
 }

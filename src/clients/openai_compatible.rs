@@ -5,13 +5,16 @@
 //! Supports OpenAI itself, DeepSeek, Qwen, Moonshot, Zhipu and any other
 //! provider with OpenAI-compatible API.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
 use reqwest::Client as HttpClient;
 use tokio::sync::mpsc;
 
+use crate::capability::CapabilityRules;
 use crate::client::Client;
+use crate::data::Capabilities;
 use crate::data::ConnectionParams;
 use crate::data::ModelInfo;
 use crate::data::Prompt;
@@ -19,7 +22,6 @@ use crate::data::PromptEvent;
 use crate::data::Provider;
 use crate::error::ClusterError;
 use crate::support::content_value;
-use crate::support::model_supports_vision;
 use crate::support::spawn_sse_chunk_forwarder;
 
 /// Default host for the OpenAI provider when none is configured.
@@ -29,6 +31,7 @@ const DEFAULT_API_HOST: &str = "https://api.openai.com/v1";
 #[derive(Clone)]
 pub struct OpenAiClient {
     client: HttpClient,
+    rules: Arc<CapabilityRules>,
     host: String,
     model: String,
     api_key: String,
@@ -39,8 +42,8 @@ pub struct OpenAiClient {
     num_predict: usize,
     timeout_secs: u64,
     provider: Provider,
-    /// Vision capability, detected once at construction (name-based).
-    vision: bool,
+    /// Capabilities, resolved once at construction (name-based rules).
+    capabilities: Capabilities,
     stats: bool,
 }
 
@@ -96,16 +99,16 @@ impl Client for OpenAiClient {
         Ok(false)
     }
 
-    /// Checks if the model supports vision (image input).
-    /// Cached at construction: none of the supported cloud providers expose
-    /// modality info via their OpenAI-compatible API, so detection is
-    /// name-based (see support::vision).
-    async fn is_vision(&self) -> Result<bool, ClusterError> {
-        Ok(self.vision)
+    /// Returns the model capabilities.
+    /// Resolved once at construction: none of the supported cloud providers
+    /// expose modality info via their OpenAI-compatible API, so detection
+    /// is name-based (capability rules).
+    async fn capabilities(&self) -> Result<Capabilities, ClusterError> {
+        Ok(self.capabilities.clone())
     }
 
     /// Lists models on the host. OpenAI-compatible /models reports only
-    /// id/owned_by/created — capabilities stay `None`.
+    /// id/owned_by/created; capabilities come from the name rules.
     async fn list_models(&self) -> Result<Vec<ModelInfo>, ClusterError> {
         let url = format!("{}/models", self.host);
         let response = self
@@ -156,10 +159,7 @@ impl Client for OpenAiClient {
                     quantization: None,
                     size: None,
                     context_length: None,
-                    vision: None,
-                    tools: None,
-                    thinking: None,
-                    embedding: None,
+                    capabilities: self.rules.capabilities(&self.provider, name),
                 })
                 .collect());
         }
@@ -174,6 +174,7 @@ impl Client for OpenAiClient {
             .filter_map(|m| {
                 let name = m["id"].as_str()?.to_string();
                 Some(ModelInfo {
+                    capabilities: self.rules.capabilities(&self.provider, &name),
                     name,
                     digest: None,
                     remote_model: None,
@@ -188,10 +189,6 @@ impl Client for OpenAiClient {
                     quantization: None,
                     size: None,
                     context_length: None,
-                    vision: None,
-                    tools: None,
-                    thinking: None,
-                    embedding: None,
                 })
             })
             .collect())
@@ -382,19 +379,19 @@ impl OpenAiClient {
     /// Creates a new OpenAI-compatible client from connection parameters.
     /// An empty host falls back to the OpenAI API host for the OpenAI
     /// provider; the other providers keep the host as given.
-    pub fn new(params: ConnectionParams) -> Self {
+    pub fn new(params: ConnectionParams, rules: Arc<CapabilityRules>) -> Self {
         let temp = params.temperature.unwrap_or(0.7) as f64;
-        // Detect vision before moving fields out of params.
-        // Name-based; update support::vision if a provider adds a model
-        // that does not match the existing patterns.
-        let vision = model_supports_vision(&params.provider, &params.model);
         let host = if params.provider == Provider::OpenAI && params.host.is_empty() {
             DEFAULT_API_HOST.to_string()
         } else {
             params.host
         };
+        // Capabilities resolve once: name-based rules are the only
+        // cloud capability source.
+        let capabilities = rules.capabilities(&params.provider, &params.model);
         Self {
             client: HttpClient::new(),
+            rules,
             host,
             model: params.model,
             api_key: params.api_key.unwrap_or_default(),
@@ -404,7 +401,7 @@ impl OpenAiClient {
             num_predict: params.num_predict.unwrap_or(2048),
             timeout_secs: params.timeout_secs.unwrap_or(120),
             provider: params.provider,
-            vision,
+            capabilities,
             stats: params.stats,
         }
     }

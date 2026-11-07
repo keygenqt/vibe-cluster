@@ -16,7 +16,8 @@ does not necessarily mean a new client.
 
 The layering logic: the cluster orchestrates only through the `Client`
 trait, concrete clients are created by the factory, data types are
-kept apart from the machinery.
+kept apart from the machinery. Capability detection is its own layer,
+consumed by the clients and the cluster.
 
 ## Invariants
 
@@ -32,8 +33,15 @@ kept apart from the machinery.
 - Image payload normalization is the client's concern: providers want
   different formats (raw base64 / data URI), the shared helper lives
   in support.
-- Vision detection for cloud providers is a name-based heuristic: the
-  APIs do not report modality, the name table is maintained by hand
-  and updated when new models ship. Ollama detects live via /api/show.
+- Model capabilities are detected by rules, not hardcoded in Rust:
+  the default rule tables ship embedded and are maintained by hand,
+  the user extends or replaces them at runtime. A broken rule set is
+  rejected at load, never at match time. Ollama detects live via its
+  API and only falls back to the rules.
 - One file — one entity; mod.rs holds only imports and a doc header
   with a `# Submodules` section; every file starts with an SPDX header.
+- Validation is a contract, not a side effect: a type with invariants
+  implements the validate trait, validation runs after parsing and
+  before the data is applied — invalid data never reaches the engine.
+- Tests live in the tests/ directory only, split by task into separate
+  binaries; no `#[cfg(test)]` tests inside the crate.

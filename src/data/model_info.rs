@@ -5,6 +5,8 @@
 //! `ModelInfo` aggregates everything the provider APIs report about a
 //! model; fields a provider does not report stay `None`.
 
+use crate::data::capabilities::Capabilities;
+
 /// Everything a provider reports about a single model.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ModelInfo {
@@ -41,10 +43,7 @@ pub struct ModelInfo {
     /// Context window in tokens (/api/show → model_info.<arch>.context_length).
     pub context_length: Option<u64>,
 
-    // --- capabilities (tri-state) ---
-    pub vision: Option<bool>,
-    pub tools: Option<bool>,
-    pub thinking: Option<bool>,
-    /// Model produces embeddings, not chat completions.
-    pub embedding: Option<bool>,
+    // --- capabilities ---
+    /// What the model can do; fields the provider did not report stay `None`.
+    pub capabilities: Capabilities,
 }

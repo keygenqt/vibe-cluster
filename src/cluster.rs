@@ -11,6 +11,7 @@ use std::time::Instant;
 use tokio::sync::Mutex;
 
 use crate::cancel::CancelToken;
+use crate::capability::CapabilityRules;
 use crate::client::Client;
 use crate::clients;
 use crate::data::BatchOptions;
@@ -22,6 +23,7 @@ use crate::data::Provider;
 use crate::error::ClusterError;
 use crate::tokens::count_prompt_tokens;
 use crate::tokens::count_tokens;
+use crate::validate::ValidateTrait;
 
 /// Model cluster that manages multiple LLM connections.
 pub struct Cluster {
@@ -29,20 +31,34 @@ pub struct Cluster {
 }
 
 impl Cluster {
-    /// Create cluster from connection settings.
-    /// Validates connections and initializes internal clients.
+    /// Create cluster from connection settings with the embedded
+    /// capability rules.
     pub fn new(connections: Vec<ConnectionParams>) -> Result<Self, ClusterError> {
+        Self::new_with_rules(connections, CapabilityRules::new())
+    }
+
+    /// Create cluster from connection settings with custom capability
+    /// rules: they extend or replace the detection tables.
+    pub fn new_with_rules(
+        connections: Vec<ConnectionParams>,
+        rules: CapabilityRules,
+    ) -> Result<Self, ClusterError> {
         if connections.is_empty() {
             return Err(ClusterError::Config(
                 "At least one connection required".into(),
             ));
         }
 
+        for params in &connections {
+            params.validate()?;
+        }
+
+        let rules = Arc::new(rules);
         let mut clients = Vec::new();
         for params in connections {
             let count = params.parallel.max(1);
             for _ in 0..count {
-                let client = clients::create_client(params.clone());
+                let client = clients::create_client(params.clone(), rules.clone());
                 clients.push(Arc::new(Mutex::new(client)));
             }
         }
@@ -532,7 +548,18 @@ impl Cluster {
         if has_images {
             let mut vision_clients = Vec::new();
             for client in &active_clients {
-                let is_vision = client.lock().await.is_vision().await.unwrap_or(false);
+                // A failed capabilities check keeps the model out of the
+                // image routing — conservative; it stays for text prompts.
+                let is_vision = client
+                    .lock()
+                    .await
+                    .capabilities()
+                    .await
+                    .map(|caps| caps.input.vision.unwrap_or(false))
+                    .unwrap_or_else(|error| {
+                        log::warn!("capabilities check failed: {}", error);
+                        false
+                    });
                 if is_vision {
                     vision_clients.push(client.clone());
                 }

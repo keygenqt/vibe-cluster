@@ -3,12 +3,14 @@
 
 //! Common trait for all internal HTTP clients.
 
-use std::time::{Duration, Instant};
+use std::time::Duration;
+use std::time::Instant;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
 use crate::cancel::CancelToken;
+use crate::data::Capabilities;
 use crate::data::ModelInfo;
 use crate::data::Prompt;
 use crate::data::PromptEvent;
@@ -42,8 +44,10 @@ pub trait Client: Send + Sync {
     /// Check if the model is currently processing another request.
     async fn is_busy(&self) -> Result<bool, ClusterError>;
 
-    /// Checks if the model supports vision (image input).
-    async fn is_vision(&self) -> Result<bool, ClusterError>;
+    /// Returns the model capabilities. Detection is live for Ollama
+    /// (`/api/show`) and rule-based for the cloud providers; a failed
+    /// check propagates as `Err`.
+    async fn capabilities(&self) -> Result<Capabilities, ClusterError>;
 
     /// Lists models available on this provider's host (host-level: the
     /// configured model is ignored). Facts the provider does not

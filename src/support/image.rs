@@ -7,7 +7,7 @@
 
 /// Guesses the MIME type of a base64-encoded image by its prefix,
 /// without decoding. Falls back to PNG.
-pub(crate) fn mime_from_base64(img: &str) -> &'static str {
+pub fn mime_from_base64(img: &str) -> &'static str {
     if img.starts_with("/9j/") {
         "image/jpeg"
     } else if img.starts_with("iVBORw0KGgo") {
@@ -23,7 +23,7 @@ pub(crate) fn mime_from_base64(img: &str) -> &'static str {
 
 /// Strips a `data:<mime>;base64,` prefix if present.
 /// Ollama wants raw base64; OpenAI-compatible APIs want a full data URI.
-pub(crate) fn strip_data_uri(img: &str) -> &str {
+pub fn strip_data_uri(img: &str) -> &str {
     match img.find(',') {
         Some(i) if img[..i].starts_with("data:") => &img[i + 1..],
         _ => img,

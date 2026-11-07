@@ -4,6 +4,7 @@
 //! Ollama API client implementation.
 //! Uses Ollama's native /api/generate endpoint.
 
+use std::sync::Arc;
 use std::time::Duration;
 
 use async_trait::async_trait;
@@ -12,20 +13,25 @@ use reqwest::Client as HttpClient;
 use reqwest::Response;
 use tokio::sync::mpsc;
 
+use crate::capability::CapabilityRules;
 use crate::client::Client;
+use crate::data::Abilities;
+use crate::data::Capabilities;
 use crate::data::ConnectionParams;
+use crate::data::Input;
 use crate::data::ModelInfo;
+use crate::data::Output;
 use crate::data::Prompt;
 use crate::data::PromptEvent;
 use crate::data::Provider;
 use crate::error::ClusterError;
-use crate::support::model_supports_vision;
 use crate::support::strip_data_uri;
 
 /// Client for interacting with Ollama API.
 #[derive(Clone)]
 pub struct OllamaClient {
     client: HttpClient,
+    rules: Arc<CapabilityRules>,
     host: String,
     model: String,
     temperature: f64,
@@ -119,44 +125,12 @@ impl Client for OllamaClient {
         Ok(false)
     }
 
-    /// Checks if the model supports vision (image input) via /api/show.
-    /// Live check (not cached): a local model can be re-pulled under the
-    /// same name at any time.
-    async fn is_vision(&self) -> Result<bool, ClusterError> {
-        let json = self.show_model(&self.model).await?;
-
-        // Modern Ollama versions expose an explicit capabilities array
-        let capabilities = json["capabilities"].as_array();
-        let is_vision_capable = capabilities
-            .map(|c| c.iter().any(|v| v.as_str() == Some("vision")))
-            .unwrap_or(false);
-
-        if is_vision_capable {
-            return Ok(true);
-        }
-
-        // Fallback for older Ollama versions: vision models carry a CLIP
-        // encoder, a dedicated projector, or a known vision family.
-        let families = json["details"]["families"].as_array();
-        let has_vision_family = families
-            .map(|f| {
-                f.iter().any(|v| {
-                    matches!(
-                        v.as_str(),
-                        Some("clip") | Some("mllama") | Some("qwen2vl") | Some("qwen3vl")
-                    )
-                })
-            })
-            .unwrap_or(false);
-
-        // projector_info is a TOP-LEVEL field of /api/show, next to model_info
-        let has_projector = json["projector_info"].is_object();
-
-        // The last tier: the name-based heuristic — a known name on an
-        // old server whose family list we do not recognize yet.
-        Ok(has_vision_family
-            || has_projector
-            || model_supports_vision(&Provider::Ollama, &self.model))
+    /// Returns the model capabilities: live from /api/show (a local
+    /// model can be re-pulled under the same name at any time), empty
+    /// fields fall back to the capability rules.
+    async fn capabilities(&self) -> Result<Capabilities, ClusterError> {
+        let show = self.show_model(&self.model).await?;
+        Ok(self.show_capabilities(&show, &self.model))
     }
 
     /// Lists all models on the host. Static facts come from /api/tags;
@@ -210,20 +184,12 @@ impl Client for OllamaClient {
                 quantization: details["quantization_level"].as_str().map(String::from),
                 size: model["size"].as_u64(),
                 context_length: None,
-                vision: None,
-                tools: None,
-                thinking: None,
-                embedding: None,
+                capabilities: Capabilities::default(),
             };
 
-            // A failed /api/show keeps capabilities None — the provider did not say.
+            // A failed /api/show keeps capabilities default — the provider did not say.
             if let Ok(show) = self.show_model(name).await {
-                let caps = show["capabilities"].as_array();
-                let has = |cap: &str| caps.map(|c| c.iter().any(|v| v.as_str() == Some(cap)));
-                info.vision = has("vision");
-                info.tools = has("tools");
-                info.thinking = has("thinking");
-                info.embedding = has("embedding");
+                info.capabilities = self.show_capabilities(&show, name);
                 info.context_length = show["model_info"].as_object().and_then(|map| {
                     map.iter()
                         .find(|(key, _)| key.ends_with(".context_length"))
@@ -532,10 +498,11 @@ impl OllamaClient {
     }
 
     /// Creates a new Ollama client from connection parameters.
-    pub fn new(params: ConnectionParams) -> Self {
+    pub fn new(params: ConnectionParams, rules: Arc<CapabilityRules>) -> Self {
         let temp = params.temperature.unwrap_or(0.7) as f64;
         Self {
             client: HttpClient::new(),
+            rules,
             host: params.host,
             model: params.model,
             temperature: (temp * 100.0).round() / 100.0,
@@ -565,6 +532,81 @@ impl OllamaClient {
             )));
         }
         Ok(response.json().await?)
+    }
+
+    /// Maps a /api/show body into capabilities: reported keys fill the
+    /// matching fields, the rest fall back to the vision tiers (families
+    /// → projector) and the name rules.
+    fn show_capabilities(&self, show: &serde_json::Value, name: &str) -> Capabilities {
+        let caps = show["capabilities"].as_array();
+        let has = |cap: &str| caps.map(|c| c.iter().any(|v| v.as_str() == Some(cap)));
+
+        let mut capabilities = Capabilities {
+            input: Input {
+                text: None,
+                vision: has("vision"),
+                audio: has("audio"),
+                video: has("video"),
+            },
+            output: Output::default(),
+            abilities: Abilities {
+                tools: has("tools"),
+                thinking: has("thinking"),
+                embedding: has("embedding"),
+                decision: has("decision"),
+            },
+        };
+
+        // Older servers: vision models carry a CLIP encoder, a dedicated
+        // projector, or a known vision family.
+        if capabilities.input.vision.is_none() {
+            let families = show["details"]["families"].as_array();
+            let has_vision_family = families
+                .map(|f| {
+                    f.iter().any(|v| {
+                        matches!(
+                            v.as_str(),
+                            Some("clip") | Some("mllama") | Some("qwen2vl") | Some("qwen3vl")
+                        )
+                    })
+                })
+                .unwrap_or(false);
+            let has_projector = show["projector_info"].is_object();
+            if has_vision_family || has_projector {
+                capabilities.input.vision = Some(true);
+            }
+        }
+
+        // Fields the server did not report fall back to the name rules.
+        let fallback = self.rules.capabilities(&Provider::Ollama, name);
+        let fill = |target: &mut Option<bool>, source: Option<bool>| {
+            if target.is_none() {
+                *target = source;
+            }
+        };
+        fill(&mut capabilities.input.text, fallback.input.text);
+        fill(&mut capabilities.input.vision, fallback.input.vision);
+        fill(&mut capabilities.input.audio, fallback.input.audio);
+        fill(&mut capabilities.input.video, fallback.input.video);
+        fill(&mut capabilities.output.text, fallback.output.text);
+        fill(&mut capabilities.output.image, fallback.output.image);
+        fill(&mut capabilities.output.audio, fallback.output.audio);
+        fill(&mut capabilities.output.video, fallback.output.video);
+        fill(&mut capabilities.abilities.tools, fallback.abilities.tools);
+        fill(
+            &mut capabilities.abilities.thinking,
+            fallback.abilities.thinking,
+        );
+        fill(
+            &mut capabilities.abilities.embedding,
+            fallback.abilities.embedding,
+        );
+        fill(
+            &mut capabilities.abilities.decision,
+            fallback.abilities.decision,
+        );
+
+        capabilities
     }
 
     /// Streams /api/generate with stream=true. No total timeout: a long

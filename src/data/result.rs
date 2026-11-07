@@ -4,7 +4,8 @@
 //! Prompt execution result returned by Cluster.
 //! Contains response text, provider info, timing, and optional error.
 
-use crate::data::{Prompt, Provider};
+use crate::data::Prompt;
+use crate::data::Provider;
 use crate::error::ClusterError;
 
 /// Result of a single prompt execution.

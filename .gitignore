@@ -3,3 +3,6 @@ target/
 
 # macOS
 .DS_Store
+
+# Other
+*.log

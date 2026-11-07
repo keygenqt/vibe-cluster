@@ -7,13 +7,11 @@
 //!
 //! - `image` — image payload normalization: MIME detection, data URI stripping.
 //! - `sse` — OpenAI-compatible SSE stream forwarding into PromptEvents.
-//! - `vision` — name-based vision capability detection per provider.
 
 mod image;
 mod sse;
-mod vision;
 
 pub(crate) use image::content_value;
-pub(crate) use image::strip_data_uri;
+pub use image::mime_from_base64;
+pub use image::strip_data_uri;
 pub(crate) use sse::spawn_sse_chunk_forwarder;
-pub(crate) use vision::model_supports_vision;

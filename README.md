@@ -14,7 +14,8 @@ One API, multiple providers, zero coordination overhead.
 
 - Distributes prompts across multiple LLM providers (local and cloud)
 - Supports Ollama, OpenAI-compatible APIs (DeepSeek, Qwen, Moonshot, Zhipu, Yandex) and GigaChat (OAuth token + OpenAI-compatible)
-- Vision model support — route image prompts to vision-capable models
+- Model capabilities — what each model accepts, produces, and can do, as a structured matrix
+- Capability rules shipped built-in and user-extensible: adjust or replace detection at runtime with your own rules, no crate release needed
 - Parallel execution with automatic worker distribution
 - Per-prompt results with provider info, timing, and error details
 - Automatic retry on network errors and server failures (5xx)
@@ -103,16 +104,18 @@ let results = cluster
     .unwrap();
 ```
 
-| Provider | Type  | API                                                 | Vision (models)                       |
-| -------- | ----- | --------------------------------------------------- | ------------------------------------- |
-| Ollama   | Local | Native `/api/generate`                              | ✓ auto-detected via `/api/show`       |
-| OpenAI   | Cloud | OpenAI-compatible `/v1` (api.openai.com by default) | ✓ `gpt-4o*`, `gpt-4.1*`, `o1`, `o3`   |
-| DeepSeek | Cloud | OpenAI-compatible `/v1`                             | –                                     |
-| Qwen     | Cloud | OpenAI-compatible `/v1`                             | ✓ `qwen-vl-*`, `qvq-*`, `qwen-omni-*` |
-| Moonshot | Cloud | OpenAI-compatible `/v1`                             | ✓ `*-vision-preview`, `kimi-latest`   |
-| Zhipu    | Cloud | OpenAI-compatible `/v1`                             | ✓ `glm-4v`, `glm-4.1v`, `glm-4.5v`    |
-| Yandex   | Cloud | OpenAI-compatible `/v1`, `Api-Key` + project header | –                                     |
-| GigaChat | Cloud | OAuth token + OpenAI-compatible `/v1`               | –                                     |
+| Provider | Type  | API                                                 |
+| -------- | ----- | --------------------------------------------------- |
+| Ollama   | Local | Native `/api/generate`                              |
+| OpenAI   | Cloud | OpenAI-compatible `/v1` (api.openai.com by default) |
+| DeepSeek | Cloud | OpenAI-compatible `/v1`                             |
+| Qwen     | Cloud | OpenAI-compatible `/v1`                             |
+| Moonshot | Cloud | OpenAI-compatible `/v1`                             |
+| Zhipu    | Cloud | OpenAI-compatible `/v1`                             |
+| Yandex   | Cloud | OpenAI-compatible `/v1`, `Api-Key` + project header |
+| GigaChat | Cloud | OAuth token + OpenAI-compatible `/v1`               |
+
+Model capabilities are detected from the built-in rules (Ollama is detected live, rules serve as the fallback) and can be adjusted at runtime.
 
 ---
 

@@ -5,6 +5,7 @@
 //!
 //! # Submodules
 //!
+//! - `capabilities` — model capabilities: modalities and abilities.
 //! - `chunk` — streamed pieces of a model response.
 //! - `model_info` — a model as a provider host reports it.
 //! - `options` — batch execution options and the model filter.
@@ -13,6 +14,7 @@
 //! - `provider` — the provider kind.
 //! - `result` — the result of a single prompt execution.
 
+mod capabilities;
 mod chunk;
 mod model_info;
 mod options;
@@ -21,6 +23,10 @@ mod prompt;
 mod provider;
 mod result;
 
+pub use capabilities::Abilities;
+pub use capabilities::Capabilities;
+pub use capabilities::Input;
+pub use capabilities::Output;
 pub use chunk::PromptEvent;
 pub use model_info::ModelInfo;
 pub use options::BatchOptions;

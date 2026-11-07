@@ -1,0 +1,203 @@
+{
+  "version": 1,
+  "providers": {
+    "ollama": {
+      "input": {
+        "text": { "default": true },
+        "vision": {
+          "keywords": [
+            "bakllava",
+            "gemma3",
+            "glm-5.3-flash",
+            "llava",
+            "minicpm-v",
+            "moondream",
+            "omni",
+            "vision",
+            "vl"
+          ],
+          "include": ["glm.*\\dv"]
+        },
+        "audio": { "keywords": ["omni"] },
+        "video": { "keywords": ["omni"] }
+      },
+      "output": {
+        "text": { "default": true, "exclude": ["embed", "bge"] },
+        "image": { "default": false },
+        "audio": { "default": false },
+        "video": { "default": false }
+      },
+      "abilities": {
+        "tools": { "keywords": ["qwen", "llama", "mistral", "glm"] },
+        "thinking": { "keywords": ["thinking", "qwq", "r1"] },
+        "embedding": { "keywords": ["embed", "bge"] },
+        "decision": { "default": false }
+      }
+    },
+    "openai": {
+      "input": {
+        "text": { "default": true, "exclude": ["whisper"] },
+        "vision": {
+          "names": ["o1", "o1-preview", "o1-pro", "o3", "o3-pro"],
+          "keywords": [
+            "chatgpt-4o",
+            "flash",
+            "gpt-4-turbo",
+            "gpt-4.1",
+            "gpt-4o",
+            "gpt-5",
+            "kimi",
+            "o4",
+            "omni",
+            "qwen3.6-35b",
+            "qvq",
+            "vision",
+            "vl"
+          ],
+          "include": ["^glm[-\\d.]*\\dv", "^glm-5\\.3-flash"]
+        },
+        "audio": { "keywords": ["audio", "realtime"] },
+        "video": { "default": false }
+      },
+      "output": {
+        "text": { "default": true, "exclude": ["^(dall-e|gpt-image|tts|sora)"] },
+        "image": { "include": ["^(dall-e|gpt-image)"] },
+        "audio": { "include": ["^tts"], "keywords": ["realtime"] },
+        "video": { "include": ["^sora"] }
+      },
+      "abilities": {
+        "thinking": { "include": ["^(o\\d|gpt-5)"] },
+        "tools": {
+          "keywords": ["chatgpt", "gpt"],
+          "include": ["^o[34]"],
+          "exclude": ["^gpt-image"]
+        },
+        "embedding": { "keywords": ["embedding"] },
+        "decision": { "default": false }
+      }
+    },
+    "deepseek": {
+      "input": {
+        "text": { "default": true },
+        "vision": { "keywords": ["flash", "vision"] },
+        "audio": { "default": false },
+        "video": { "default": false }
+      },
+      "output": {
+        "text": { "default": true },
+        "image": { "default": false },
+        "audio": { "default": false },
+        "video": { "default": false }
+      },
+      "abilities": {
+        "thinking": { "keywords": ["r1", "reasoner"] },
+        "tools": { "keywords": ["chat", "flash"] },
+        "embedding": { "default": false },
+        "decision": { "default": false }
+      }
+    },
+    "qwen": {
+      "input": {
+        "text": { "default": true },
+        "vision": { "keywords": ["omni", "qvq", "vl"] },
+        "audio": { "keywords": ["audio", "omni"] },
+        "video": { "keywords": ["omni"] }
+      },
+      "output": {
+        "text": {
+          "default": true,
+          "exclude": ["^wanx", "^wan\\d", "cosyvoice", "qwen-tts", "qwen-image"]
+        },
+        "image": { "include": ["^wanx"], "keywords": ["qwen-image"] },
+        "audio": { "keywords": ["cosyvoice", "qwen-tts"] },
+        "video": { "include": ["^wan\\d"] }
+      },
+      "abilities": {
+        "thinking": { "keywords": ["thinking"], "include": ["^qwen3"] },
+        "tools": { "keywords": ["qwen"] },
+        "embedding": { "keywords": ["embedding"] },
+        "decision": { "default": false }
+      }
+    },
+    "moonshot": {
+      "input": {
+        "text": { "default": true },
+        "vision": { "keywords": ["kimi", "vision"] },
+        "audio": { "default": false },
+        "video": { "keywords": ["kimi"] }
+      },
+      "output": {
+        "text": { "default": true },
+        "image": { "default": false },
+        "audio": { "default": false },
+        "video": { "default": false }
+      },
+      "abilities": {
+        "thinking": { "keywords": ["thinking"] },
+        "tools": { "keywords": ["kimi"] },
+        "embedding": { "default": false },
+        "decision": { "default": false }
+      }
+    },
+    "zhipu": {
+      "input": {
+        "text": { "default": true },
+        "vision": { "include": ["^glm[-\\d.]*\\dv", "^glm-5\\.3-flash"] },
+        "audio": { "default": false },
+        "video": { "default": false }
+      },
+      "output": {
+        "text": { "default": true, "exclude": ["cogview", "cogvideox"] },
+        "image": { "keywords": ["cogview"] },
+        "audio": { "default": false },
+        "video": { "keywords": ["cogvideox"] }
+      },
+      "abilities": {
+        "thinking": { "keywords": ["thinking"] },
+        "tools": { "keywords": ["glm"] },
+        "embedding": { "keywords": ["embedding"] },
+        "decision": { "default": false }
+      }
+    },
+    "yandex": {
+      "input": {
+        "text": { "default": true },
+        "vision": { "keywords": ["flash", "qwen3.6-35b", "vision"] },
+        "audio": { "default": false },
+        "video": { "default": false }
+      },
+      "output": {
+        "text": { "default": true },
+        "image": { "default": false },
+        "audio": { "default": false },
+        "video": { "default": false }
+      },
+      "abilities": {
+        "thinking": { "default": false },
+        "tools": { "default": false },
+        "embedding": { "default": false },
+        "decision": { "default": false }
+      }
+    },
+    "gigachat": {
+      "input": {
+        "text": { "default": true },
+        "vision": { "keywords": ["2-max", "2-pro", "3-ultra", "vision"] },
+        "audio": { "default": false },
+        "video": { "default": false }
+      },
+      "output": {
+        "text": { "default": true },
+        "image": { "default": false },
+        "audio": { "default": false },
+        "video": { "default": false }
+      },
+      "abilities": {
+        "thinking": { "default": false },
+        "tools": { "keywords": ["gigachat"] },
+        "embedding": { "default": false },
+        "decision": { "default": false }
+      }
+    }
+  }
+}

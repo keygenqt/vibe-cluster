@@ -54,16 +54,19 @@
 //!
 //! # Layout
 //!
+//! - `capability` — name-based capability detection: rules + defaults.
 //! - `cluster` — the engine: distribution, retries, progress.
 //! - `client` — the `Client` trait contract for provider APIs.
 //! - `clients` — one implementation per provider API + the factory.
 //! - `data` — types exchanged between the cluster and its clients.
 //! - `error` — the failure contract.
 //! - `normalize` — response normalization helpers.
-//! - `support` — shared client helpers (vision, image payloads).
+//! - `support` — shared client helpers (image payloads, SSE).
 //! - `tokens` — token counting.
+//! - `validate` — the validation contract and per-type validators.
 
 mod cancel;
+mod capability;
 mod client;
 mod clients;
 mod cluster;
@@ -72,25 +75,34 @@ mod error;
 mod normalize;
 mod support;
 mod tokens;
+mod validate;
 
 pub use cancel::CancelToken;
+pub use capability::CapabilityRules;
 pub use client::Client;
 pub use clients::GigaChatClient;
 pub use clients::OllamaClient;
 pub use clients::OpenAiClient;
-pub use clients::create_client;
 pub use cluster::Cluster;
+pub use data::Abilities;
 pub use data::BatchOptions;
+pub use data::Capabilities;
 pub use data::ConnectionParams;
 pub use data::HistoryMessage;
+pub use data::Input;
 pub use data::ModelFilter;
 pub use data::ModelInfo;
+pub use data::Output;
 pub use data::Prompt;
 pub use data::PromptEvent;
 pub use data::PromptResult;
 pub use data::Provider;
 pub use data::Role;
 pub use error::ClusterError;
+pub use validate::ValidateTrait;
 
+pub use clients::create_client;
 pub use normalize::normalize_text;
+pub use support::mime_from_base64;
+pub use support::strip_data_uri;
 pub use tokens::count_tokens;
