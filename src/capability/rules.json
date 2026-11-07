@@ -79,7 +79,7 @@
     "deepseek": {
       "input": {
         "text": { "default": true },
-        "vision": { "keywords": ["flash", "vision"] },
+        "vision": { "include": ["^deepseek-flash"], "keywords": ["vision"] },
         "audio": { "default": false },
         "video": { "default": false }
       },
@@ -90,31 +90,70 @@
         "video": { "default": false }
       },
       "abilities": {
-        "thinking": { "keywords": ["r1", "reasoner"] },
-        "tools": { "keywords": ["chat", "flash"] },
+        "thinking": { "default": true },
+        "tools": { "default": true },
         "embedding": { "default": false },
         "decision": { "default": false }
       }
     },
     "qwen": {
       "input": {
-        "text": { "default": true },
-        "vision": { "keywords": ["omni", "qvq", "vl"] },
-        "audio": { "keywords": ["audio", "omni"] },
-        "video": { "keywords": ["omni"] }
+        "text": { "default": true, "exclude": ["asr", "s2s", "livetranslate"] },
+        "vision": {
+          "keywords": ["omni", "qvq", "vl", "ocr"],
+          "include": ["^qwen3\\.[6-9]", "deepseek-v4\\.1"],
+          "exclude": ["embedding", "rerank"]
+        },
+        "audio": { "keywords": ["audio", "omni", "asr", "s2s", "livetranslate"] },
+        "video": { "include": ["^qwen3\\.8"], "keywords": ["omni"] }
       },
       "output": {
         "text": {
           "default": true,
-          "exclude": ["^wanx", "^wan\\d", "cosyvoice", "qwen-tts", "qwen-image"]
+          "exclude": [
+            "^wanx",
+            "^wan\\d",
+            "cosyvoice",
+            "image",
+            "tts",
+            "speech",
+            "asr",
+            "s2s",
+            "livetranslate",
+            "rerank",
+            "embedding",
+            "unisound"
+          ]
         },
-        "image": { "include": ["^wanx"], "keywords": ["qwen-image"] },
-        "audio": { "keywords": ["cosyvoice", "qwen-tts"] },
-        "video": { "include": ["^wan\\d"] }
+        "image": { "include": ["^wanx"], "keywords": ["image"] },
+        "audio": { "keywords": ["tts", "cosyvoice", "s2s", "speech", "livetranslate"] },
+        "video": { "include": ["^wan\\d"], "exclude": ["image"] }
       },
       "abilities": {
-        "thinking": { "keywords": ["thinking"], "include": ["^qwen3"] },
-        "tools": { "keywords": ["qwen"] },
+        "thinking": {
+          "keywords": ["thinking"],
+          "include": ["^qwen3"],
+          "exclude": ["asr", "tts", "embedding", "rerank", "s2s", "livetranslate"]
+        },
+        "tools": {
+          "include": ["^qwen"],
+          "keywords": ["kimi", "glm", "deepseek", "minimax"],
+          "exclude": [
+            "embedding",
+            "rerank",
+            "tts",
+            "asr",
+            "s2s",
+            "livetranslate",
+            "image",
+            "speech",
+            "cosyvoice",
+            "ocr",
+            "omni",
+            "qvq",
+            "^qwen-mt"
+          ]
+        },
         "embedding": { "keywords": ["embedding"] },
         "decision": { "default": false }
       }
@@ -122,9 +161,12 @@
     "moonshot": {
       "input": {
         "text": { "default": true },
-        "vision": { "keywords": ["kimi", "vision"] },
+        "vision": {
+          "include": ["^kimi-k2\\.[5-9]", "^kimi-k3"],
+          "keywords": ["vision"]
+        },
         "audio": { "default": false },
-        "video": { "keywords": ["kimi"] }
+        "video": { "default": false }
       },
       "output": {
         "text": { "default": true },
@@ -133,7 +175,7 @@
         "video": { "default": false }
       },
       "abilities": {
-        "thinking": { "keywords": ["thinking"] },
+        "thinking": { "include": ["^kimi-k2\\.[5-9]"], "keywords": ["thinking"] },
         "tools": { "keywords": ["kimi"] },
         "embedding": { "default": false },
         "decision": { "default": false }
@@ -144,7 +186,7 @@
         "text": { "default": true },
         "vision": { "include": ["^glm[-\\d.]*\\dv", "^glm-5\\.3-flash"] },
         "audio": { "default": false },
-        "video": { "default": false }
+        "video": { "include": ["^glm-5\\.3-flash"] }
       },
       "output": {
         "text": { "default": true, "exclude": ["cogview", "cogvideox"] },
@@ -153,7 +195,7 @@
         "video": { "keywords": ["cogvideox"] }
       },
       "abilities": {
-        "thinking": { "keywords": ["thinking"] },
+        "thinking": { "include": ["^glm-4\\.[5-9]", "^glm-5"] },
         "tools": { "keywords": ["glm"] },
         "embedding": { "keywords": ["embedding"] },
         "decision": { "default": false }
@@ -173,8 +215,8 @@
         "video": { "default": false }
       },
       "abilities": {
-        "thinking": { "default": false },
-        "tools": { "default": false },
+        "thinking": { "include": ["^yandexgpt-5\\.1", "^yandexgpt-5-pro"] },
+        "tools": { "include": ["^yandexgpt"] },
         "embedding": { "default": false },
         "decision": { "default": false }
       }
@@ -183,7 +225,7 @@
       "input": {
         "text": { "default": true },
         "vision": { "keywords": ["2-max", "2-pro", "3-ultra", "vision"] },
-        "audio": { "default": false },
+        "audio": { "keywords": ["2-max", "3-ultra"] },
         "video": { "default": false }
       },
       "output": {
