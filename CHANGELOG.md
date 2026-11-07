@@ -8,6 +8,7 @@ All notable changes to Vibe Action will be documented in this file.
 
 - Optional token counting (ConnectionParams.stats) into PromptResult
 - Add image content support to chat history and vision-capable clients
+- Capability rules engine with embedded JSON tables, Capabilities matrix, and connection validation
 
 ## [0.1.0] - 2026-10-31
 
