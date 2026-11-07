@@ -2,6 +2,12 @@
 
 All notable changes to Vibe Action will be documented in this file.
 
+## [0.2.1] - 2026-11-07
+
+### 🚀 Features
+
+- Split create_client into embedded-rules default and create_client_with_rules
+
 ## [0.2.0] - 2026-11-07
 
 ### 🚀 Features
