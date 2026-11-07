@@ -5,11 +5,8 @@
 
 mod common;
 
-use std::sync::Arc;
-
 use common::mock_server;
 use vibe_cluster::CancelToken;
-use vibe_cluster::CapabilityRules;
 use vibe_cluster::ConnectionParams;
 use vibe_cluster::Prompt;
 use vibe_cluster::Provider;
@@ -24,15 +21,12 @@ async fn test_yandex_models_accepts_missing_catalog() {
         vec![br#"{"error":"not found"}"#.to_vec()],
     )
     .await;
-    let client = create_client(
-        ConnectionParams {
-            provider: Provider::Yandex,
-            host,
-            model: "yandexgpt-5-lite".into(),
-            ..Default::default()
-        },
-        Arc::new(CapabilityRules::new()),
-    );
+    let client = create_client(ConnectionParams {
+        provider: Provider::Yandex,
+        host,
+        model: "yandexgpt-5-lite".into(),
+        ..Default::default()
+    });
 
     let models = client.list_models().await.unwrap();
     server.await.unwrap();
@@ -49,15 +43,12 @@ async fn test_ollama_rejects_json_error_with_success_status() {
         vec![br#"{"error":"model failed"}"#.to_vec()],
     )
     .await;
-    let client = create_client(
-        ConnectionParams {
-            provider: Provider::Ollama,
-            host,
-            model: "test".into(),
-            ..Default::default()
-        },
-        Arc::new(CapabilityRules::new()),
-    );
+    let client = create_client(ConnectionParams {
+        provider: Provider::Ollama,
+        host,
+        model: "test".into(),
+        ..Default::default()
+    });
 
     let error = client
         .call(&Prompt::new("test", None, None))
@@ -77,16 +68,13 @@ async fn test_stats_flag_counts_tokens() {
         vec![payload.as_bytes().to_vec()],
     )
     .await;
-    let client = create_client(
-        ConnectionParams {
-            provider: Provider::OpenAI,
-            host,
-            model: "gpt-4o".into(),
-            stats: true,
-            ..Default::default()
-        },
-        Arc::new(CapabilityRules::new()),
-    );
+    let client = create_client(ConnectionParams {
+        provider: Provider::OpenAI,
+        host,
+        model: "gpt-4o".into(),
+        stats: true,
+        ..Default::default()
+    });
 
     let result = client
         .execute(&Prompt::new("test", None, None), 1, &CancelToken::new())
@@ -107,15 +95,12 @@ async fn test_stats_default_counts_nothing() {
         vec![payload.as_bytes().to_vec()],
     )
     .await;
-    let client = create_client(
-        ConnectionParams {
-            provider: Provider::OpenAI,
-            host,
-            model: "gpt-4o".into(),
-            ..Default::default()
-        },
-        Arc::new(CapabilityRules::new()),
-    );
+    let client = create_client(ConnectionParams {
+        provider: Provider::OpenAI,
+        host,
+        model: "gpt-4o".into(),
+        ..Default::default()
+    });
 
     let result = client
         .execute(&Prompt::new("test", None, None), 1, &CancelToken::new())
@@ -129,14 +114,11 @@ async fn test_stats_default_counts_nothing() {
 
 #[tokio::test]
 async fn test_ollama_list_models() {
-    let client = create_client(
-        ConnectionParams {
-            provider: Provider::Ollama,
-            host: "http://localhost:11434".into(),
-            ..Default::default()
-        },
-        Arc::new(CapabilityRules::new()),
-    );
+    let client = create_client(ConnectionParams {
+        provider: Provider::Ollama,
+        host: "http://localhost:11434".into(),
+        ..Default::default()
+    });
     let models = client.list_models().await.unwrap();
 
     assert!(

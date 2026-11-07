@@ -10,7 +10,6 @@ use std::sync::Arc;
 
 use common::mock_server;
 use vibe_cluster::CancelToken;
-use vibe_cluster::CapabilityRules;
 use vibe_cluster::Cluster;
 use vibe_cluster::ConnectionParams;
 use vibe_cluster::Prompt;
@@ -30,15 +29,12 @@ async fn test_openai_stream_split_utf8_crlf_and_final_event() {
         .map(|chunk| chunk.to_vec())
         .collect();
     let (host, server) = mock_server("200 OK", "text/event-stream", chunks).await;
-    let client = create_client(
-        ConnectionParams {
-            provider: Provider::OpenAI,
-            host,
-            model: "gpt-4o".into(),
-            ..Default::default()
-        },
-        Arc::new(CapabilityRules::new()),
-    );
+    let client = create_client(ConnectionParams {
+        provider: Provider::OpenAI,
+        host,
+        model: "gpt-4o".into(),
+        ..Default::default()
+    });
 
     let mut receiver = client
         .call_stream(&Prompt::new("test", None, None))
@@ -67,15 +63,12 @@ async fn test_ollama_stream_split_utf8_and_final_line() {
         .map(|chunk| chunk.to_vec())
         .collect();
     let (host, server) = mock_server("200 OK", "application/x-ndjson", chunks).await;
-    let client = create_client(
-        ConnectionParams {
-            provider: Provider::Ollama,
-            host,
-            model: "test".into(),
-            ..Default::default()
-        },
-        Arc::new(CapabilityRules::new()),
-    );
+    let client = create_client(ConnectionParams {
+        provider: Provider::Ollama,
+        host,
+        model: "test".into(),
+        ..Default::default()
+    });
 
     let mut receiver = client
         .call_stream(&Prompt::new("test", None, None))

@@ -58,7 +58,7 @@ impl Cluster {
         for params in connections {
             let count = params.parallel.max(1);
             for _ in 0..count {
-                let client = clients::create_client(params.clone(), rules.clone());
+                let client = clients::create_client_with_rules(params.clone(), rules.clone());
                 clients.push(Arc::new(Mutex::new(client)));
             }
         }
