@@ -32,10 +32,11 @@ pub struct ClientStats {
 
 /// Token and timing report of one prompt execution. Every part is
 /// the exact value the client reports, the BPE estimate of what was
-/// fed otherwise. Everything fed to the request is counted: text and
-/// image payloads alike — the image cost is its base64 size, not the
-/// provider's image-token pricing. The estimates use the shared BPE:
-/// exact for OpenAI, approximate for the rest.
+/// fed otherwise. Only the text is counted: the inlined text files
+/// ride the user part, image payloads stay out — their real cost is
+/// the provider's image-token pricing, and only the usage can tell
+/// it. The estimates use the shared BPE: exact for OpenAI,
+/// approximate for the rest.
 #[derive(Debug, Clone, Default)]
 pub struct PromptStats {
     /// Wall time of the whole call, ms: connection, retries,
@@ -65,24 +66,12 @@ impl PromptStats {
         text: &str,
         client: ClientStats,
     ) -> Self {
-        let user = {
-            let mut total = count_tokens(&prompt.user);
-            for image in prompt.images.iter().flatten() {
-                total += count_tokens(image);
-            }
-            total
-        };
+        let user = count_tokens(&prompt.user);
         let system = prompt.system.as_deref().map(count_tokens).unwrap_or(0);
         let history: usize = prompt
             .history
             .iter()
-            .map(|message| {
-                let mut total = count_tokens(&message.content);
-                for image in &message.images {
-                    total += count_tokens(image);
-                }
-                total
-            })
+            .map(|message| count_tokens(&message.content))
             .sum();
         Self {
             duration_ms,
