@@ -11,14 +11,14 @@ use tokio::sync::mpsc;
 
 use crate::cancel::CancelToken;
 use crate::data::Capabilities;
+use crate::data::ClientStats;
 use crate::data::ModelInfo;
 use crate::data::Prompt;
 use crate::data::PromptEvent;
 use crate::data::PromptResult;
+use crate::data::PromptStats;
 use crate::data::Provider;
 use crate::error::ClusterError;
-use crate::tokens::count_prompt_tokens;
-use crate::tokens::count_tokens;
 
 /// Client trait — one implementation per provider API.
 #[async_trait]
@@ -106,20 +106,23 @@ pub trait Client: Send + Sync {
 
             match raw {
                 Ok((thinking_text, response_text)) => {
-                    let (prompt_tokens, completion_tokens) = if self.stats() {
-                        (
-                            count_prompt_tokens(prompt),
-                            Some(count_tokens(&thinking_text) + count_tokens(&response_text)),
-                        )
+                    let stats = if self.stats() {
+                        Some(PromptStats::measure(
+                            start.elapsed().as_millis() as u64,
+                            prompt,
+                            &thinking_text,
+                            &response_text,
+                            ClientStats::default(),
+                        ))
                     } else {
-                        (0, None)
+                        None
                     };
                     return Ok(PromptResult {
                         prompt: prompt.clone(),
                         provider: self.provider(),
                         host: self.host().to_string(),
                         model: self.model_name().to_string(),
-                        duration_ms: start.elapsed().as_millis() as u64,
+                        stats,
                         thinking: if thinking_text.is_empty() {
                             None
                         } else {
@@ -127,8 +130,6 @@ pub trait Client: Send + Sync {
                         },
                         text: Some(response_text),
                         error: None,
-                        prompt_tokens,
-                        completion_tokens,
                     });
                 }
                 Err(e) => {

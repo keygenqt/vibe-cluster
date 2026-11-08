@@ -121,7 +121,11 @@ async fn test_progress_callback() {
                 done,
                 total,
                 result.model,
-                result.duration_ms,
+                result
+                    .stats
+                    .as_ref()
+                    .map(|stats| stats.duration_ms)
+                    .unwrap_or(0),
                 if result.error.is_none() { "OK" } else { "FAIL" }
             );
         })

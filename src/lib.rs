@@ -33,6 +33,7 @@
 //!     provider: Provider::Ollama,
 //!     host: "http://localhost:11434".into(),
 //!     model: "qwen2.5-coder:3b-instruct".into(),
+//!     stats: true,
 //!     ..Default::default()
 //! }];
 //! let cluster = Cluster::new(connections).unwrap();
@@ -49,7 +50,8 @@
 //!     })
 //!     .await
 //!     .unwrap();
-//! println!("\n{} ms, {}", result.duration_ms, result.model);
+//! let stats = result.stats.expect("stats: true fills the report");
+//! println!("\n{} ms, {} tokens out", stats.duration_ms, stats.output_tokens);
 //! ```
 //!
 //! # Layout
@@ -96,6 +98,7 @@ pub use data::Output;
 pub use data::Prompt;
 pub use data::PromptEvent;
 pub use data::PromptResult;
+pub use data::PromptStats;
 pub use data::Provider;
 pub use data::Role;
 pub use error::ClusterError;

@@ -82,8 +82,12 @@ async fn test_stats_flag_counts_tokens() {
         .unwrap();
     server.await.unwrap();
 
-    assert!(result.prompt_tokens > 0);
-    assert_eq!(result.completion_tokens, Some(count_tokens("Hello 👋")));
+    let stats = result.stats.expect("stats: true fills the report");
+    assert_eq!(stats.user_tokens, count_tokens("test"));
+    assert_eq!(stats.system_tokens, 0);
+    assert_eq!(stats.history_tokens, 0);
+    assert_eq!(stats.output_tokens, count_tokens("Hello 👋"));
+    assert_eq!(stats.thinking_tokens, 0);
 }
 
 #[tokio::test]
@@ -108,8 +112,7 @@ async fn test_stats_default_counts_nothing() {
         .unwrap();
     server.await.unwrap();
 
-    assert_eq!(result.prompt_tokens, 0);
-    assert_eq!(result.completion_tokens, None);
+    assert!(result.stats.is_none());
 }
 
 #[tokio::test]

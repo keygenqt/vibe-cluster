@@ -61,6 +61,7 @@ pub fn test_config() -> Vec<ConnectionParams> {
         seed: Some(42),
         num_ctx: Some(4096),
         num_predict: Some(2048),
+        stats: true,
         ..Default::default()
     }]
 }

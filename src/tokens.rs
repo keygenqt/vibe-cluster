@@ -10,8 +10,6 @@
 use std::sync::LazyLock;
 use tiktoken_rs::CoreBPE;
 
-use crate::data::Prompt;
-
 /// One BPE per process: building the ranks is expensive, counting is not.
 static BPE: LazyLock<CoreBPE> =
     LazyLock::new(|| tiktoken_rs::o200k_base().expect("static o200k_base ranks are valid"));
@@ -23,17 +21,4 @@ pub fn count_tokens(text: &str) -> usize {
         return 0;
     }
     BPE.encode_with_special_tokens(text).len()
-}
-
-/// Counts the estimated tokens of the whole prompt: user, system
-/// and history together.
-pub fn count_prompt_tokens(prompt: &Prompt) -> usize {
-    let mut total = count_tokens(&prompt.user);
-    if let Some(system) = &prompt.system {
-        total += count_tokens(system);
-    }
-    for message in &prompt.history {
-        total += count_tokens(&message.content);
-    }
-    total
 }

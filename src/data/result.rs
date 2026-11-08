@@ -5,6 +5,7 @@
 //! Contains response text, provider info, timing, and optional error.
 
 use crate::data::Prompt;
+use crate::data::PromptStats;
 use crate::data::Provider;
 use crate::error::ClusterError;
 
@@ -19,18 +20,14 @@ pub struct PromptResult {
     pub host: String,
     /// Model name that generated the response.
     pub model: String,
-    /// Duration in milliseconds.
-    pub duration_ms: u64,
+    /// The token and timing report of the call; `None` = the call
+    /// did not complete (cancelled, failed) or `ConnectionParams.stats`
+    /// is off.
+    pub stats: Option<PromptStats>,
     /// Optional chain of thought from reasoning models.
     pub thinking: Option<String>,
     /// The response text (empty if error).
     pub text: Option<String>,
     /// Error if the prompt failed after all retries.
     pub error: Option<ClusterError>,
-    /// Estimated prompt tokens (user + system + history); 0 when
-    /// `ConnectionParams.stats` is off.
-    pub prompt_tokens: usize,
-    /// Estimated completion tokens (text + thinking); `None` when
-    /// `ConnectionParams.stats` is off or there is no answer.
-    pub completion_tokens: Option<usize>,
 }

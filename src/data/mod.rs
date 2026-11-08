@@ -13,6 +13,7 @@
 //! - `prompt` — the prompt and the conversation history.
 //! - `provider` — the provider kind.
 //! - `result` — the result of a single prompt execution.
+//! - `stats` — the usage stats: client-reported facts and the resolved report.
 
 mod capabilities;
 mod chunk;
@@ -22,6 +23,7 @@ mod params;
 mod prompt;
 mod provider;
 mod result;
+mod stats;
 
 pub use capabilities::Abilities;
 pub use capabilities::Capabilities;
@@ -37,3 +39,5 @@ pub use prompt::Prompt;
 pub use prompt::Role;
 pub use provider::Provider;
 pub use result::PromptResult;
+pub use stats::ClientStats;
+pub use stats::PromptStats;

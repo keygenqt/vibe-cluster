@@ -16,6 +16,7 @@ One API, multiple providers, zero coordination overhead.
 - Supports Ollama, OpenAI-compatible APIs (DeepSeek, Qwen, Moonshot, Zhipu, Yandex) and GigaChat (OAuth token + OpenAI-compatible)
 - Model capabilities — what each model accepts, produces, and can do, as a structured matrix
 - Capability rules shipped built-in and user-extensible: adjust or replace detection at runtime with your own rules, no crate release needed
+- Usage stats per call: token breakdown (user / system / history / output / thinking) and wall time, enabled by `stats: true`
 - Parallel execution with automatic worker distribution
 - Per-prompt results with provider info, timing, and error details
 - Automatic retry on network errors and server failures (5xx)
@@ -98,7 +99,8 @@ let prompts: Vec<Prompt> = files
     .collect();
 let results = cluster
     .batch_call(&prompts, |result, done, total| {
-        println!("[{}/{}] {} in {}ms", done, total, result.model, result.duration_ms);
+        let ms = result.stats.as_ref().map(|stats| stats.duration_ms).unwrap_or(0);
+        println!("[{}/{}] {} in {}ms", done, total, result.model, ms);
     })
     .await
     .unwrap();
