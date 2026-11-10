@@ -1,11 +1,11 @@
-# git-cliff configuration for Vibe Action
+# git-cliff configuration for Vibe Cluster
 # https://git-cliff.org/docs/configuration
 
 [changelog]
 header = """
 # Changelog
 
-All notable changes to Vibe Action will be documented in this file.
+All notable changes to Vibe Cluster will be documented in this file.
 
 """
 body = """

@@ -12,3 +12,10 @@ fn test_normalize_json_fence_and_backticks() {
     let raw = r#"{"text":"```"}"#;
     assert_eq!(normalize_text(raw), raw);
 }
+
+#[test]
+fn test_normalize_single_line_unquoted_keys() {
+    assert_eq!(normalize_text("{a:1}"), "{\"a\":1}");
+    assert_eq!(normalize_text("{\"a\":1,b:2}"), "{\"a\":1,\"b\":2}");
+    assert_eq!(normalize_text("{\"a\":1, b : 2}"), "{\"a\":1, \"b\": 2}");
+}

@@ -8,8 +8,9 @@ use std::sync::Arc;
 
 use tokio::sync::Mutex;
 
-use crate::cancel::CancelToken;
-use crate::client::Client;
+use crate::client::ClientTrait;
+use crate::constants;
+use crate::data::CancelToken;
 use crate::data::Provider;
 
 /// Options for batch execution. Cloning the options clones the
@@ -21,8 +22,14 @@ pub struct BatchOptions {
     /// Force specific provider.
     pub provider: Option<Provider>,
     /// Maximum number of attempts per prompt; zero still allows one attempt.
+    /// `None` — a single attempt, no retries.
     pub retries: Option<usize>,
-    /// Ensure full GPU memory for the model
+    /// Ensure full GPU memory for the model: eject and reload between
+    /// prompts for clean context. Only meaningful for Ollama — cloud
+    /// providers are always available and ignore the flag. Honest
+    /// only with `parallel = 1` on the connection — sibling
+    /// connections can re-load the model in the settle window after
+    /// the eject.
     pub exclusive: bool,
     /// Cancellation handle: cancel() stops pending attempts and the
     /// remaining prompts of the batch. Default — a fresh token, never cancelled.
@@ -46,7 +53,7 @@ impl Default for BatchOptions {
         Self {
             models: ModelFilter::All,
             provider: None,
-            retries: Some(5),
+            retries: Some(constants::DEFAULT_RETRIES),
             exclusive: false,
             cancel: CancelToken::default(),
         }
@@ -55,7 +62,7 @@ impl Default for BatchOptions {
 
 impl BatchOptions {
     /// Checks if a client should be included based on model filter and provider constraints.
-    pub async fn matches_client(&self, client: &Arc<Mutex<Box<dyn Client>>>) -> bool {
+    pub async fn matches_client(&self, client: &Arc<Mutex<Box<dyn ClientTrait>>>) -> bool {
         let client = client.lock().await;
 
         if let Some(ref provider) = self.provider {

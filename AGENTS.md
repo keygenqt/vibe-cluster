@@ -17,7 +17,8 @@ does not necessarily mean a new client.
 The layering logic: the cluster orchestrates only through the `Client`
 trait, concrete clients are created by the factory, data types are
 kept apart from the machinery. Capability detection is its own layer,
-consumed by the clients and the cluster.
+consumed by the clients; the cluster only forwards the rules to the
+factory.
 
 ## Invariants
 
@@ -26,7 +27,9 @@ consumed by the clients and the cluster.
   `crate::data::...` do not exist outside the crate.
 - All failures funnel into `ClusterError`; the retry and cancellation
   policy is centralized in the trait's execute — a client's call
-  returns a raw result and knows nothing about retry logic.
+  returns a raw result and knows nothing about retry logic. The only
+  in-client exception is the GigaChat OAuth token refresh: a stale
+  token is refreshed and the request retried once inside the call.
 - Cancellation never loses results: cancelled prompts of a batch get
   a result with `ClusterError::Cancelled`, the result buffer is never
   abandoned.
@@ -38,8 +41,10 @@ consumed by the clients and the cluster.
   the user extends or replaces them at runtime. A broken rule set is
   rejected at load, never at match time. Ollama detects live via its
   API and only falls back to the rules.
-- One file — one entity; mod.rs holds only imports and a doc header
-  with a `# Submodules` section; every file starts with an SPDX header.
+- One file — one entity or one cohesive family (the parameter
+  families, the rules engine); mod.rs holds only imports and a doc
+  header with a `# Submodules` section; every file starts with an
+  SPDX header.
 - Validation is a contract, not a side effect: a type with invariants
   implements the validate trait, validation runs after parsing and
   before the data is applied — invalid data never reaches the engine.

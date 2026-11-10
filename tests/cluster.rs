@@ -8,12 +8,20 @@
 
 mod common;
 
-use common::test_config;
-use common::test_config_two_models;
 use vibe_cluster::BatchOptions;
+use vibe_cluster::CancelToken;
 use vibe_cluster::Cluster;
+use vibe_cluster::ClusterError;
+use vibe_cluster::Connection;
 use vibe_cluster::ModelFilter;
+use vibe_cluster::OllamaParams;
+use vibe_cluster::OpenAiParams;
+use vibe_cluster::Params;
 use vibe_cluster::Prompt;
+use vibe_cluster::Provider;
+
+use crate::common::ollama_connection::test_config;
+use crate::common::ollama_connection::test_config_two_models;
 
 #[tokio::test]
 async fn test_single_call() {
@@ -148,8 +156,8 @@ async fn test_empty_connections() {
 
 #[tokio::test]
 async fn test_unreachable_host() {
-    let config = vec![vibe_cluster::ConnectionParams {
-        provider: vibe_cluster::Provider::Ollama,
+    let config = vec![Connection {
+        provider: Provider::Ollama,
         host: "http://127.0.0.1:1".into(),
         model: "qwen2.5-coder:3b-instruct".into(),
         timeout_secs: Some(1),
@@ -164,7 +172,7 @@ async fn test_unreachable_host() {
 async fn test_batch_cancel() {
     let cluster = Cluster::new(test_config()).unwrap();
 
-    let cancel = vibe_cluster::CancelToken::new();
+    let cancel = CancelToken::new();
     cancel.cancel();
 
     let options = BatchOptions {
@@ -184,10 +192,48 @@ async fn test_batch_cancel() {
     assert_eq!(results.len(), 3);
     for (i, r) in results.iter().enumerate() {
         assert!(
-            matches!(r.error, Some(vibe_cluster::ClusterError::Cancelled)),
+            matches!(r.error, Some(ClusterError::Cancelled)),
             "prompt {} expected Cancelled: {:?}",
             i,
             r.error
         );
     }
+}
+
+#[tokio::test]
+async fn test_params_family_mismatch() {
+    let config = vec![Connection {
+        provider: Provider::GigaChat,
+        host: "https://api.giga.chat/v1".into(),
+        model: "GigaChat".into(),
+        params: Params::Ollama(OllamaParams::default()),
+        api_key: Some("key".into()),
+        ..Default::default()
+    }];
+
+    // the params variant must follow the provider family
+    let error = match Cluster::new(config) {
+        Err(error) => error,
+        Ok(_) => panic!("expected the params family mismatch"),
+    };
+    assert!(matches!(error, ClusterError::Config(_)));
+}
+
+#[tokio::test]
+async fn test_yandex_requires_project() {
+    let config = vec![Connection {
+        provider: Provider::Yandex,
+        host: "https://yandex.api/v1".into(),
+        model: "yandexgpt-5-lite".into(),
+        params: Params::OpenAi(OpenAiParams::default()),
+        api_key: Some("key".into()),
+        ..Default::default()
+    }];
+
+    // without a folder id the call would fail at runtime — catch it at config
+    let error = match Cluster::new(config) {
+        Err(error) => error,
+        Ok(_) => panic!("expected the missing project error"),
+    };
+    assert!(matches!(error, ClusterError::Config(_)));
 }

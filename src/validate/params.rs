@@ -1,15 +1,16 @@
 // SPDX-FileCopyrightText: 2026 Vitaliy Zarubin <keygenqt@yandex.ru>
 // SPDX-License-Identifier: Apache-2.0
 
-//! ConnectionParams validation.
+//! Connection validation.
 //! See [`crate::validate`] module-level docs for the validation contract.
 
-use crate::data::ConnectionParams;
+use crate::data::Connection;
+use crate::data::Params;
 use crate::data::Provider;
 use crate::error::ClusterError;
 use crate::validate::ValidateTrait;
 
-impl ValidateTrait for ConnectionParams {
+impl ValidateTrait for Connection {
     /// Validate a single connection.
     fn validate(&self) -> Result<(), ClusterError> {
         let is_blank = |s: &str| s.trim().is_empty();
@@ -41,28 +42,31 @@ impl ValidateTrait for ConnectionParams {
             }
         }
 
-        // Ranges and limits.
-        if self
-            .temperature
-            .is_some_and(|temperature| !(0.0..=2.0).contains(&temperature))
-        {
+        // The params variant must match the provider family.
+        let family_matches = match (&self.provider, &self.params) {
+            (Provider::Ollama, Params::Ollama(_)) => true,
+            (
+                Provider::OpenAI
+                | Provider::DeepSeek
+                | Provider::Qwen
+                | Provider::Moonshot
+                | Provider::Zhipu
+                | Provider::Yandex,
+                Params::OpenAi(_),
+            ) => true,
+            (Provider::GigaChat, Params::GigaChat(_)) => true,
+            _ => false,
+        };
+        if !family_matches {
             return Err(ClusterError::Config(format!(
-                "Connection '{}': temperature must be 0.0-2.0.",
+                "Connection '{}': params does not match the provider family.",
                 self.model
             )));
         }
-        if self.num_ctx.is_some_and(|value| value == 0) {
-            return Err(ClusterError::Config(format!(
-                "Connection '{}': num_ctx must be > 0.",
-                self.model
-            )));
-        }
-        if self.num_predict.is_some_and(|value| value == 0) {
-            return Err(ClusterError::Config(format!(
-                "Connection '{}': num_predict must be > 0.",
-                self.model
-            )));
-        }
+
+        // Ranges and limits: the generation ones live on the params,
+        // the connection ones stay here.
+        self.params.validate()?;
         if self.timeout_secs.is_some_and(|value| value == 0) {
             return Err(ClusterError::Config(format!(
                 "Connection '{}': timeout_secs must be > 0.",
@@ -72,6 +76,22 @@ impl ValidateTrait for ConnectionParams {
         if self.parallel == 0 {
             return Err(ClusterError::Config(format!(
                 "Connection '{}': parallel must be > 0.",
+                self.model
+            )));
+        }
+
+        // Yandex routes by the project folder: without it the model must
+        // already be a full gpt:// URI, otherwise the provider rejects
+        // the call at runtime.
+        if self.provider == Provider::Yandex
+            && self
+                .project
+                .as_ref()
+                .map_or(true, |project| project.trim().is_empty())
+            && !self.model.starts_with("gpt://")
+        {
+            return Err(ClusterError::Config(format!(
+                "Connection '{}': project is required for Yandex unless the model is a gpt:// URI.",
                 self.model
             )));
         }
@@ -97,6 +117,77 @@ impl ValidateTrait for ConnectionParams {
             )));
         }
 
+        Ok(())
+    }
+}
+
+impl ValidateTrait for Params {
+    /// Checks the ranges of the set parameters: a `None` means the
+    /// provider default applies and carries no range.
+    fn validate(&self) -> Result<(), ClusterError> {
+        match self {
+            Params::Ollama(params) => {
+                check_f64("temperature", params.temperature, 0.0, 2.0)?;
+                check_f64("top_p", params.top_p, 0.0, 1.0)?;
+                check_zero("top_k", params.top_k, 0)?;
+                check_f64("min_p", params.min_p, 0.0, 1.0)?;
+                check_stop(params.stop.as_ref())?;
+                check_zero("num_ctx", params.num_ctx, 0)?;
+                check_zero("num_predict", params.num_predict, 0)?;
+            }
+            Params::OpenAi(params) => {
+                check_f64("temperature", params.temperature, 0.0, 2.0)?;
+                check_f64("top_p", params.top_p, 0.0, 1.0)?;
+                check_zero("top_k", params.top_k, 0)?;
+                check_f64("min_p", params.min_p, 0.0, 1.0)?;
+                check_stop(params.stop.as_ref())?;
+                check_zero("num_predict", params.num_predict, 0)?;
+            }
+            Params::GigaChat(params) => {
+                check_f64("temperature", params.temperature, 0.0, 2.0)?;
+                check_f64("top_p", params.top_p, 0.0, 1.0)?;
+                check_zero("num_predict", params.num_predict, 0)?;
+            }
+        }
+        Ok(())
+    }
+}
+
+/// Range check of an optional f64 parameter.
+fn check_f64(name: &str, value: Option<f64>, min: f64, max: f64) -> Result<(), ClusterError> {
+    if value.is_some_and(|value| !(min..=max).contains(&value)) {
+        Err(ClusterError::Config(format!(
+            "Generation parameters: {} must be {}-{}.",
+            name, min, max
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+/// Zero check of an optional numeric parameter.
+fn check_zero<T: PartialEq + Copy>(
+    name: &str,
+    value: Option<T>,
+    zero: T,
+) -> Result<(), ClusterError> {
+    if value.is_some_and(|value| value == zero) {
+        Err(ClusterError::Config(format!(
+            "Generation parameters: {} must be > 0.",
+            name
+        )))
+    } else {
+        Ok(())
+    }
+}
+
+/// Stop sequences must not carry empty entries.
+fn check_stop(stop: Option<&Vec<String>>) -> Result<(), ClusterError> {
+    if stop.is_some_and(|stop| stop.iter().any(|item| item.trim().is_empty())) {
+        Err(ClusterError::Config(
+            "Generation parameters: stop sequences must not be empty.".into(),
+        ))
+    } else {
         Ok(())
     }
 }

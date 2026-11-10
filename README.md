@@ -16,7 +16,7 @@ One API, multiple providers, zero coordination overhead.
 - Supports Ollama, OpenAI-compatible APIs (DeepSeek, Qwen, Moonshot, Zhipu, Yandex) and GigaChat (OAuth token + OpenAI-compatible)
 - Model capabilities — what each model accepts, produces, and can do, as a structured matrix
 - Capability rules shipped built-in and user-extensible: adjust or replace detection at runtime with your own rules, no crate release needed
-- Usage stats per call: token breakdown (user / system / history / output / thinking) and wall time, enabled by `stats: true`
+- Usage stats per call: input / cached / output / thinking tokens exactly as the provider reports them, plus wall time; missing counts can be filled with an optional BPE estimator (`Connection.bpe`)
 - Parallel execution with automatic worker distribution
 - Per-prompt results with provider info, timing, and error details
 - Automatic retry on network errors and server failures (5xx)
@@ -48,11 +48,11 @@ cargo add vibe-cluster
 ```
 
 ```rust
-use vibe_cluster::{BatchOptions, Cluster, ConnectionParams, ModelFilter, Prompt, Provider};
+use vibe_cluster::{BatchOptions, Cluster, Connection, ModelFilter, Prompt, Provider};
 
 // Configure connections
 let connections = vec![
-    ConnectionParams {
+    Connection {
         provider: Provider::Ollama,
         host: "http://localhost:11434".into(),
         model: "qwen2.5-coder:3b-instruct".into(),
@@ -108,7 +108,7 @@ let results = cluster
 
 | Provider | Type  | API                                                 |
 | -------- | ----- | --------------------------------------------------- |
-| Ollama   | Local | Native `/api/generate`                              |
+| Ollama   | Local | Native `/api/generate`; history via `/api/chat`     |
 | OpenAI   | Cloud | OpenAI-compatible `/v1` (api.openai.com by default) |
 | DeepSeek | Cloud | OpenAI-compatible `/v1`                             |
 | Qwen     | Cloud | OpenAI-compatible `/v1`                             |

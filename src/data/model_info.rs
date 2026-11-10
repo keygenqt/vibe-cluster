@@ -5,15 +5,13 @@
 //! `ModelInfo` aggregates everything the provider APIs report about a
 //! model; fields a provider does not report stay `None`.
 
-use crate::data::capabilities::Capabilities;
+use crate::Capabilities;
 
 /// Everything a provider reports about a single model.
 #[derive(Debug, Clone, serde::Serialize)]
 pub struct ModelInfo {
     /// Model name as the provider addresses it (call/execute use it).
     pub name: String,
-
-    // --- identity ---
     /// Content digest (Ollama /api/tags).
     pub digest: Option<String>,
     /// Name of the upstream model, if the model is remote (Ollama cloud).
@@ -26,8 +24,6 @@ pub struct ModelInfo {
     pub modified_at: Option<String>,
     /// Creation timestamp, unix seconds (OpenAI-compatible /models `created`).
     pub created: Option<i64>,
-
-    // --- static facts (Ollama /api/tags `details`, /api/show) ---
     /// Model file format, e.g. "gguf".
     pub format: Option<String>,
     /// Primary model family, e.g. "llama".
@@ -42,8 +38,30 @@ pub struct ModelInfo {
     pub size: Option<u64>,
     /// Context window in tokens (/api/show → model_info.<arch>.context_length).
     pub context_length: Option<u64>,
-
-    // --- capabilities ---
     /// What the model can do; fields the provider did not report stay `None`.
     pub capabilities: Capabilities,
+}
+
+impl ModelInfo {
+    /// A skeleton with the name and everything else unset — callers
+    /// fill the facts their provider reports via struct update syntax.
+    pub fn new(name: impl Into<String>) -> Self {
+        Self {
+            name: name.into(),
+            digest: None,
+            remote_model: None,
+            remote_host: None,
+            owned_by: None,
+            modified_at: None,
+            created: None,
+            format: None,
+            family: None,
+            families: None,
+            params: None,
+            quantization: None,
+            size: None,
+            context_length: None,
+            capabilities: Capabilities::default(),
+        }
+    }
 }

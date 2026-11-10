@@ -7,14 +7,20 @@
 //! # Quick start
 //!
 //! ```rust,ignore
-//! use vibe_cluster::{CancelToken, Cluster, ConnectionParams, Prompt, PromptEvent, Provider};
+//! use vibe_cluster::{
+//!     CancelToken, Cluster, Connection, OllamaParams, Prompt, PromptEvent,
+//! };
 //!
-//! let connections = vec![ConnectionParams {
-//!     provider: Provider::Ollama,
-//!     host: "http://localhost:11434".into(),
-//!     model: "qwen2.5-coder:3b-instruct".into(),
-//!     ..Default::default()
-//! }];
+//! let connections = vec![Connection::ollama(
+//!     "http://localhost:11434",
+//!     "qwen2.5-coder:3b-instruct",
+//!     OllamaParams {
+//!         temperature: Some(0.7),
+//!         num_ctx: Some(32768),
+//!         num_predict: Some(2048),
+//!         ..Default::default()
+//!     },
+//! )];
 //!
 //! let cluster = Cluster::new(connections).unwrap();
 //! let result = cluster
@@ -27,13 +33,21 @@
 //! # Streaming
 //!
 //! ```rust,ignore
-//! use vibe_cluster::{CancelToken, Cluster, ConnectionParams, Prompt, PromptEvent, Provider};
+//! use vibe_cluster::{
+//!     CancelToken, Cluster, Connection, Params, OllamaParams, Prompt,
+//!     PromptEvent, Provider,
+//! };
 //!
-//! let connections = vec![ConnectionParams {
+//! let connections = vec![Connection {
 //!     provider: Provider::Ollama,
 //!     host: "http://localhost:11434".into(),
 //!     model: "qwen2.5-coder:3b-instruct".into(),
-//!     stats: true,
+//!     params: Params::Ollama(OllamaParams {
+//!         temperature: Some(0.7),
+//!         num_ctx: Some(32768),
+//!         num_predict: Some(2048),
+//!         ..Default::default()
+//!     }),
 //!     ..Default::default()
 //! }];
 //! let cluster = Cluster::new(connections).unwrap();
@@ -46,55 +60,60 @@
 //!         match event {
 //!             PromptEvent::Thinking(chunk) => print!("{}", chunk),
 //!             PromptEvent::Text(chunk) => print!("{}", chunk),
+//!             _ => {}
 //!         }
 //!     })
 //!     .await
 //!     .unwrap();
-//! let stats = result.stats.expect("stats: true fills the report");
-//! println!("\n{} ms, {} tokens out", stats.duration_ms, stats.output_tokens);
+//! let stats = result.stats.expect("a completed call carries the report");
+//! println!("\n{} ms, {} tokens out", stats.duration_ms, stats.output_tokens.unwrap_or(0));
 //! ```
 //!
 //! # Layout
 //!
 //! - `capability` — name-based capability detection: rules + defaults.
-//! - `cluster` — the engine: distribution, retries, progress.
-//! - `client` — the `Client` trait contract for provider APIs.
+//! - `client` — the `ClientTrait` contract for provider APIs.
 //! - `clients` — one implementation per provider API + the factory.
+//! - `cluster` — the engine: distribution, retries, progress.
+//! - `constants` — cross-client mechanics constants: timeouts, backoffs, protocol values.
 //! - `data` — types exchanged between the cluster and its clients.
 //! - `error` — the failure contract.
-//! - `normalize` — response normalization helpers.
-//! - `support` — shared client helpers (image payloads, SSE).
-//! - `tokens` — token counting.
+//! - `support` — internal client helpers (auth, http, stream); nothing here is public.
+//! - `utils` — public helpers (image payloads, normalize, tokens).
 //! - `validate` — the validation contract and per-type validators.
 
-mod cancel;
 mod capability;
 mod client;
 mod clients;
 mod cluster;
+mod constants;
 mod data;
 mod error;
-mod normalize;
 mod support;
-mod tokens;
+mod utils;
 mod validate;
 
-pub use cancel::CancelToken;
 pub use capability::CapabilityRules;
-pub use client::Client;
+pub use client::ClientTrait;
 pub use clients::GigaChatClient;
 pub use clients::OllamaClient;
 pub use clients::OpenAiClient;
 pub use cluster::Cluster;
 pub use data::Abilities;
 pub use data::BatchOptions;
+pub use data::Bpe;
+pub use data::CancelToken;
 pub use data::Capabilities;
-pub use data::ConnectionParams;
+pub use data::Connection;
+pub use data::GigaChatParams;
 pub use data::HistoryMessage;
 pub use data::Input;
 pub use data::ModelFilter;
 pub use data::ModelInfo;
+pub use data::OllamaParams;
+pub use data::OpenAiParams;
 pub use data::Output;
+pub use data::Params;
 pub use data::Prompt;
 pub use data::PromptEvent;
 pub use data::PromptResult;
@@ -105,7 +124,7 @@ pub use error::ClusterError;
 pub use validate::ValidateTrait;
 
 pub use clients::create_client;
-pub use normalize::normalize_text;
-pub use support::mime_from_base64;
-pub use support::strip_data_uri;
-pub use tokens::count_tokens;
+pub use utils::count_tokens;
+pub use utils::mime_from_base64;
+pub use utils::normalize_text;
+pub use utils::strip_data_uri;

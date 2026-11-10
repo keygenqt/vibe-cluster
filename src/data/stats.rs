@@ -1,85 +1,78 @@
 // SPDX-FileCopyrightText: 2026 Vitaliy Zarubin <keygenqt@yandex.ru>
 // SPDX-License-Identifier: Apache-2.0
 
-//! Usage stats of a prompt execution: what the client may extract
-//! from the provider response and the resolved report of the call.
+//! Usage stats of a prompt execution: what the provider reported
+//! about the call, optionally completed with BPE estimates.
 
+use crate::data::Bpe;
 use crate::data::Prompt;
-use crate::tokens::count_tokens;
 
-/// Usage facts one client extracts from its provider response; the
-/// fields the provider does not report stay `None` and fall back to
-/// the BPE estimate. Today no client parses usage — the default
-/// carries only `None`s.
-#[derive(Debug, Clone, Default)]
-pub struct ClientStats {
-    /// Exact tokens of the user part (message and its images).
-    pub user_tokens: Option<usize>,
-    /// Exact tokens of the system prompt.
-    pub system_tokens: Option<usize>,
-    /// Exact tokens of the history together.
-    pub history_tokens: Option<usize>,
-    /// Exact tokens of the answer text.
-    pub output_tokens: Option<usize>,
-    /// Exact tokens of the reasoning output.
-    pub thinking_tokens: Option<usize>,
-    /// Exact tokens of the prompt served from the provider cache.
-    /// The carrier for the future usage parsing; nothing reads it
-    /// while no client reports usage.
-    #[allow(dead_code)]
-    pub cached_tokens: Option<usize>,
-}
-
-/// Token and timing report of one prompt execution. Every part is
-/// the exact value the client reports, the BPE estimate of what was
-/// fed otherwise. Only the text is counted: the inlined text files
-/// ride the user part, image payloads stay out — their real cost is
-/// the provider's image-token pricing, and only the usage can tell
-/// it. The estimates use the shared BPE: exact for OpenAI,
-/// approximate for the rest.
+/// Token and timing report of one prompt execution. Token fields are
+/// the exact values the provider reported (`None` = not reported);
+/// with `Connection.bpe` set, the missing ones are filled with BPE
+/// estimates of the prompt and the response texts. Images never enter
+/// the estimates — their real cost is the provider's image-token
+/// pricing, and only the usage can tell it.
+///
+/// Known overlap: Ollama reports `eval_count` (output) including the
+/// thinking tokens, while the thinking estimate counts them separately —
+/// with estimates enabled the sum is inflated by the thinking size.
 #[derive(Debug, Clone, Default)]
 pub struct PromptStats {
     /// Wall time of the whole call, ms: connection, retries,
-    /// generation together.
+    /// generation together. Measured by the executor.
     pub duration_ms: u64,
-    /// Tokens of the current message with the inlined files and the
-    /// turn's images.
-    pub user_tokens: usize,
-    /// Tokens of the system prompt.
-    pub system_tokens: usize,
-    /// Tokens of the conversation history together, images included.
-    pub history_tokens: usize,
+    /// Tokens the provider served from its cache; the cheap part of
+    /// the input. Never estimated — the cache cannot be counted
+    /// from the outside.
+    pub cached_tokens: Option<usize>,
+    /// Uncached input tokens: system, history, the current message
+    /// and its images together, as the provider billed them.
+    pub input_tokens: Option<usize>,
     /// Tokens of the answer text.
-    pub output_tokens: usize,
+    pub output_tokens: Option<usize>,
     /// Tokens of the reasoning output.
-    pub thinking_tokens: usize,
+    pub thinking_tokens: Option<usize>,
 }
 
 impl PromptStats {
-    /// Measures one completed execution: every part is the exact
-    /// value the client reports, the BPE estimate of what was fed
-    /// otherwise. The caller measures `duration_ms` around the call.
-    pub(crate) fn measure(
-        duration_ms: u64,
+    /// A report of the facts one client extracted from the provider
+    /// response; the executor fills `duration_ms` after the call.
+    pub(crate) fn new(
+        cached_tokens: Option<usize>,
+        input_tokens: Option<usize>,
+        output_tokens: Option<usize>,
+        thinking_tokens: Option<usize>,
+    ) -> Self {
+        Self {
+            duration_ms: 0,
+            cached_tokens,
+            input_tokens,
+            output_tokens,
+            thinking_tokens,
+        }
+    }
+
+    /// Fills the fields the provider did not report with BPE estimates.
+    /// `cached_tokens` stays untouched — the cache is not countable
+    /// from the outside.
+    pub(crate) fn estimate_missing(
+        &mut self,
+        bpe: Bpe,
         prompt: &Prompt,
         thinking: &str,
         text: &str,
-        client: ClientStats,
-    ) -> Self {
-        let user = count_tokens(&prompt.user);
-        let system = prompt.system.as_deref().map(count_tokens).unwrap_or(0);
-        let history: usize = prompt
-            .history
-            .iter()
-            .map(|message| count_tokens(&message.content))
-            .sum();
-        Self {
-            duration_ms,
-            user_tokens: client.user_tokens.unwrap_or(user),
-            system_tokens: client.system_tokens.unwrap_or(system),
-            history_tokens: client.history_tokens.unwrap_or(history),
-            output_tokens: client.output_tokens.unwrap_or(count_tokens(text)),
-            thinking_tokens: client.thinking_tokens.unwrap_or(count_tokens(thinking)),
+    ) {
+        if self.input_tokens.is_none() {
+            let system = prompt.system.as_deref().map(|s| bpe.count(s)).unwrap_or(0);
+            let history: usize = prompt.history.iter().map(|m| bpe.count(&m.content)).sum();
+            self.input_tokens = Some(system + history + bpe.count(&prompt.user));
+        }
+        if self.output_tokens.is_none() {
+            self.output_tokens = Some(bpe.count(text));
+        }
+        if self.thinking_tokens.is_none() {
+            self.thinking_tokens = Some(bpe.count(thinking));
         }
     }
 }

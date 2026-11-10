@@ -10,13 +10,13 @@ use std::time::Instant;
 
 use tokio::sync::Mutex;
 
-use crate::cancel::CancelToken;
 use crate::capability::CapabilityRules;
-use crate::client::Client;
+use crate::client::ClientTrait;
 use crate::clients;
+use crate::constants;
 use crate::data::BatchOptions;
-use crate::data::ClientStats;
-use crate::data::ConnectionParams;
+use crate::data::CancelToken;
+use crate::data::Connection;
 use crate::data::Prompt;
 use crate::data::PromptEvent;
 use crate::data::PromptResult;
@@ -27,20 +27,20 @@ use crate::validate::ValidateTrait;
 
 /// Model cluster that manages multiple LLM connections.
 pub struct Cluster {
-    clients: Vec<Arc<Mutex<Box<dyn Client>>>>,
+    clients: Vec<Arc<Mutex<Box<dyn ClientTrait>>>>,
 }
 
 impl Cluster {
     /// Create cluster from connection settings with the embedded
     /// capability rules.
-    pub fn new(connections: Vec<ConnectionParams>) -> Result<Self, ClusterError> {
+    pub fn new(connections: Vec<Connection>) -> Result<Self, ClusterError> {
         Self::new_with_rules(connections, CapabilityRules::new())
     }
 
     /// Create cluster from connection settings with custom capability
     /// rules: they extend or replace the detection tables.
     pub fn new_with_rules(
-        connections: Vec<ConnectionParams>,
+        connections: Vec<Connection>,
         rules: CapabilityRules,
     ) -> Result<Self, ClusterError> {
         if connections.is_empty() {
@@ -58,7 +58,7 @@ impl Cluster {
         for params in connections {
             let count = params.parallel.max(1);
             for _ in 0..count {
-                let client = clients::create_client_with_rules(params.clone(), rules.clone());
+                let client = clients::create_client_with_rules(params.clone(), rules.clone())?;
                 clients.push(Arc::new(Mutex::new(client)));
             }
         }
@@ -146,7 +146,8 @@ impl Cluster {
 
     /// Streams one prompt through the best available client (local
     /// models first, loaded models first). Thinking and text deltas go
-    /// to `on_event` as they arrive, the aggregated `PromptResult`
+    /// to `on_event` as they arrive (the final usage facts are
+    /// intercepted into the result), the aggregated `PromptResult`
     /// comes back. Cancellation cuts the stream: the result carries
     /// `ClusterError::Cancelled` and whatever arrived before the cut.
     /// One attempt — no retries.
@@ -165,13 +166,13 @@ impl Cluster {
             .await?;
         let client = active_clients[0].clone();
 
-        let (provider, model_name, host, stats) = {
+        let (provider, model_name, host, bpe) = {
             let guard = client.lock().await;
             (
                 guard.provider(),
                 guard.model_name().to_string(),
                 guard.host().to_string(),
-                guard.stats(),
+                guard.bpe(),
             )
         };
 
@@ -192,6 +193,8 @@ impl Cluster {
         let mut thinking = String::new();
         let mut text = String::new();
         let mut stream_error = None;
+        let mut cancelled_mid_stream = false;
+        let mut usage_stats: Option<PromptStats> = None;
 
         if let Some(receiver) = receiver.as_mut() {
             let cancelled = raw_cancel.cancelled();
@@ -199,7 +202,10 @@ impl Cluster {
 
             loop {
                 tokio::select! {
-                    _ = &mut cancelled => break,
+                    _ = &mut cancelled => {
+                        cancelled_mid_stream = true;
+                        break;
+                    }
                     event = receiver.recv() => match event {
                         Some(Ok(PromptEvent::Thinking(chunk))) => {
                             thinking.push_str(&chunk);
@@ -208,6 +214,20 @@ impl Cluster {
                         Some(Ok(PromptEvent::Text(chunk))) => {
                             text.push_str(&chunk);
                             on_event(&PromptEvent::Text(chunk));
+                        }
+                        Some(Ok(PromptEvent::Usage {
+                            cached_tokens,
+                            input_tokens,
+                            output_tokens,
+                            thinking_tokens,
+                        })) => {
+                            // Repeated reports are fine — last wins.
+                            usage_stats = Some(PromptStats::new(
+                                cached_tokens,
+                                input_tokens,
+                                output_tokens,
+                                thinking_tokens,
+                            ));
                         }
                         Some(Err(error)) => {
                             stream_error = Some(error);
@@ -219,7 +239,7 @@ impl Cluster {
             }
         }
 
-        let error = if cancel.is_cancelled() {
+        let error = if cancelled_mid_stream || (receiver.is_none() && cancel.is_cancelled()) {
             Some(ClusterError::Cancelled)
         } else {
             stream_error
@@ -227,17 +247,17 @@ impl Cluster {
 
         // the report exists only for a completed call: a cancel or
         // a mid-stream failure carries no stats
-        let stats = if stats && error.is_none() {
-            Some(PromptStats::measure(
-                start.elapsed().as_millis() as u64,
-                &prompt,
-                &thinking,
-                &text,
-                ClientStats::default(),
-            ))
+        let mut stats = if error.is_none() {
+            Some(usage_stats.unwrap_or_default())
         } else {
             None
         };
+        if let Some(stats) = stats.as_mut() {
+            stats.duration_ms = start.elapsed().as_millis() as u64;
+            if let Some(bpe) = bpe {
+                stats.estimate_missing(bpe, &prompt, &thinking, &text);
+            }
+        }
 
         Ok(PromptResult {
             prompt,
@@ -329,16 +349,13 @@ impl Cluster {
                                 guard.host().to_string(),
                             )
                         };
-                        let result = PromptResult {
-                            prompt: prompt.clone(),
+                        let result = PromptResult::failed(
+                            prompt.clone(),
                             provider,
                             host,
-                            model: model_name,
-                            stats: None,
-                            thinking: None,
-                            text: None,
-                            error: Some(ClusterError::Cancelled),
-                        };
+                            model_name,
+                            ClusterError::Cancelled,
+                        );
                         let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                         on_progress(&result, done, total);
                         results.lock().await[idx] = Some(result);
@@ -361,34 +378,31 @@ impl Cluster {
                             guard.eject().await
                         };
                         if let Err(e) = eject_res {
-                            PromptResult {
-                                prompt: prompt.clone(),
+                            PromptResult::failed(
+                                prompt.clone(),
                                 provider,
-                                host: host.clone(),
-                                model: model_name.clone(),
-                                stats: None,
-                                thinking: None,
-                                text: None,
-                                error: Some(e),
-                            }
+                                host.clone(),
+                                model_name.clone(),
+                                e,
+                            )
                         } else {
-                            tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+                            // The settle pause runs without the lock so
+                            // siblings are not blocked — with parallel > 1
+                            // they may re-load the model early.
+                            tokio::time::sleep(constants::EJECT_SETTLE).await;
                             let guard = client_arc.lock().await;
                             match guard
                                 .execute(prompt, options.retries.unwrap_or(1), &options.cancel)
                                 .await
                             {
                                 Ok(r) => r,
-                                Err(e) => PromptResult {
-                                    prompt: prompt.clone(),
+                                Err(e) => PromptResult::failed(
+                                    prompt.clone(),
                                     provider,
-                                    host: host.clone(),
-                                    model: model_name.clone(),
-                                    stats: None,
-                                    thinking: None,
-                                    text: None,
-                                    error: Some(e),
-                                },
+                                    host.clone(),
+                                    model_name.clone(),
+                                    e,
+                                ),
                             }
                         }
                     } else {
@@ -398,16 +412,9 @@ impl Cluster {
                             .await
                         {
                             Ok(r) => r,
-                            Err(e) => PromptResult {
-                                prompt: prompt.clone(),
-                                provider,
-                                host: host.clone(),
-                                model: model_name.clone(),
-                                stats: None,
-                                thinking: None,
-                                text: None,
-                                error: Some(e),
-                            },
+                            Err(e) => {
+                                PromptResult::failed(prompt.clone(), provider, host, model_name, e)
+                            }
                         }
                     };
 
@@ -455,7 +462,7 @@ impl Cluster {
         &self,
         prompts: &[Prompt],
         options: &BatchOptions,
-    ) -> Result<Vec<Arc<Mutex<Box<dyn Client>>>>, ClusterError> {
+    ) -> Result<Vec<Arc<Mutex<Box<dyn ClientTrait>>>>, ClusterError> {
         // A busy client still matches static filters; wait for its metadata.
         let mut active_clients = Vec::new();
         for client in &self.clients {
@@ -482,7 +489,7 @@ impl Cluster {
         // Collect parallel task results matching the exact source collection type
         let candidates = active_clients.len();
         let mut reachable = Vec::new();
-        for task in futures::future::join_all(tasks).await {
+        for task in futures_util::future::join_all(tasks).await {
             if let Ok(Some(client)) = task {
                 reachable.push(client);
             }

@@ -4,6 +4,18 @@
 //! Response normalization utilities.
 //! Extract JSON from markdown fences, fix malformed JSON, return text as-is otherwise.
 
+use std::sync::LazyLock;
+
+/// Unquoted-keys fix, compiled once: `key:` → `"key":` at the line
+/// start and right after `{` or `,` — single-line JSON is fixed too.
+static KEY_RE: LazyLock<regex::Regex> = LazyLock::new(|| {
+    regex::Regex::new(r#"(?m)(^|[{,])(\s*)([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*)(:)"#).unwrap()
+});
+
+/// Comma-before-closing fix, compiled once: `,}` or `,]`.
+static COMMA_RE: LazyLock<regex::Regex> =
+    LazyLock::new(|| regex::Regex::new(r",(\s*[\]}])").unwrap());
+
 /// Normalize LLM response: strip edge markdown code blocks from text/JSON, fix malformed JSON.
 pub fn normalize_text(raw: &str) -> String {
     let mut content = raw.trim().to_string();
@@ -79,13 +91,11 @@ pub fn normalize_text(raw: &str) -> String {
     // Fix malformed JSON
     let mut json = json;
 
-    // Fix unquoted keys: `key:` → `"key":`
-    let key_re = regex::Regex::new(r"(?m)^(\s*)([a-zA-Z_][a-zA-Z0-9_]*)(?:\s*)(:)").unwrap();
-    json = key_re.replace_all(&json, r#"$1"$2"$3"#).to_string();
+    // Fix unquoted keys: `key:` → `"key":` (line start or after `{`/`,`)
+    json = KEY_RE.replace_all(&json, r#"$1$2"$3"$4"#).to_string();
 
     // Fix comma-before-closing: `,}` or `,]`
-    let comma_re = regex::Regex::new(r",(\s*[\]}])").unwrap();
-    json = comma_re.replace_all(&json, r#"$1"#).to_string();
+    json = COMMA_RE.replace_all(&json, r#"$1"#).to_string();
 
     // Balance braces and brackets
     let mut braces: i32 = 0;

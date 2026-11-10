@@ -3,15 +3,15 @@
 
 //! Common trait for all internal HTTP clients.
 
-use std::time::Duration;
 use std::time::Instant;
 
 use async_trait::async_trait;
 use tokio::sync::mpsc;
 
-use crate::cancel::CancelToken;
+use crate::constants;
+use crate::data::Bpe;
+use crate::data::CancelToken;
 use crate::data::Capabilities;
-use crate::data::ClientStats;
 use crate::data::ModelInfo;
 use crate::data::Prompt;
 use crate::data::PromptEvent;
@@ -22,15 +22,15 @@ use crate::error::ClusterError;
 
 /// Client trait — one implementation per provider API.
 #[async_trait]
-pub trait Client: Send + Sync {
+pub trait ClientTrait: Send + Sync {
     /// Host URL of this client (e.g. "http://localhost:11434").
     fn host(&self) -> &str;
 
     /// Provider type for this client.
     fn provider(&self) -> Provider;
 
-    /// Whether this client counts tokens into `PromptResult`.
-    fn stats(&self) -> bool;
+    /// The optional BPE estimator of this connection.
+    fn bpe(&self) -> Option<Bpe>;
 
     /// Model name for this client.
     fn model_name(&self) -> &str;
@@ -57,8 +57,10 @@ pub trait Client: Send + Sync {
     /// Unload the model from memory (free VRAM).
     async fn eject(&self) -> Result<(), ClusterError>;
 
-    /// Low-level call — sends raw prompt, returns raw text.
-    async fn call(&self, prompt: &Prompt) -> Result<(String, String), ClusterError>;
+    /// Low-level call — sends raw prompt, returns raw text with the
+    /// provider-reported token report (`duration_ms` stays `0`, the
+    /// executor measures the whole call).
+    async fn call(&self, prompt: &Prompt) -> Result<(String, String, PromptStats), ClusterError>;
 
     /// Streams the response as thinking/text deltas over the channel;
     /// the channel closes when the response is complete. Default
@@ -67,13 +69,21 @@ pub trait Client: Send + Sync {
         &self,
         prompt: &Prompt,
     ) -> Result<mpsc::Receiver<Result<PromptEvent, ClusterError>>, ClusterError> {
-        let (sender, receiver) = mpsc::channel(16);
+        let (sender, receiver) = mpsc::channel(constants::STREAM_CHANNEL_SIZE);
 
-        let (thinking, text) = self.call(prompt).await?;
+        let (thinking, text, stats) = self.call(prompt).await?;
         if !thinking.is_empty() {
             let _ = sender.send(Ok(PromptEvent::Thinking(thinking))).await;
         }
         let _ = sender.send(Ok(PromptEvent::Text(text))).await;
+        let _ = sender
+            .send(Ok(PromptEvent::Usage {
+                cached_tokens: stats.cached_tokens,
+                input_tokens: stats.input_tokens,
+                output_tokens: stats.output_tokens,
+                thinking_tokens: stats.thinking_tokens,
+            }))
+            .await;
 
         Ok(receiver)
     }
@@ -105,24 +115,17 @@ pub trait Client: Send + Sync {
             attempts += 1;
 
             match raw {
-                Ok((thinking_text, response_text)) => {
-                    let stats = if self.stats() {
-                        Some(PromptStats::measure(
-                            start.elapsed().as_millis() as u64,
-                            prompt,
-                            &thinking_text,
-                            &response_text,
-                            ClientStats::default(),
-                        ))
-                    } else {
-                        None
-                    };
+                Ok((thinking_text, response_text, mut stats)) => {
+                    stats.duration_ms = start.elapsed().as_millis() as u64;
+                    if let Some(bpe) = self.bpe() {
+                        stats.estimate_missing(bpe, prompt, &thinking_text, &response_text);
+                    }
                     return Ok(PromptResult {
                         prompt: prompt.clone(),
                         provider: self.provider(),
                         host: self.host().to_string(),
                         model: self.model_name().to_string(),
-                        stats,
+                        stats: Some(stats),
                         thinking: if thinking_text.is_empty() {
                             None
                         } else {
@@ -138,7 +141,9 @@ pub trait Client: Send + Sync {
                         ClusterError::Http(reqwest_err) => {
                             reqwest_err.is_timeout() || reqwest_err.is_connect()
                         }
-                        ClusterError::HttpStatus { status, .. } => (500..=599).contains(status),
+                        ClusterError::HttpStatus { status, .. } => {
+                            constants::RETRYABLE_STATUS_RANGE.contains(status)
+                        }
                         _ => false,
                     };
 
@@ -151,7 +156,7 @@ pub trait Client: Send + Sync {
                             retries,
                             e
                         );
-                        tokio::time::sleep(Duration::from_millis(500)).await;
+                        tokio::time::sleep(constants::RETRY_BACKOFF).await;
                         continue;
                     }
 

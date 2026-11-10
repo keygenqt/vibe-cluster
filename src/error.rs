@@ -86,3 +86,13 @@ pub(crate) fn error_chain(error: &dyn std::error::Error) -> String {
     }
     chain
 }
+
+/// Standard message of the output-token-limit failure, shared by the
+/// call and stream paths of every client.
+pub(crate) fn token_limit_message(model: &str, num_predict: Option<usize>) -> String {
+    format!(
+        "Model '{}' hit output token limit (num_predict: {}).",
+        model,
+        num_predict.map_or("provider default".into(), |value| value.to_string())
+    )
+}

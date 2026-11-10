@@ -38,4 +38,3 @@ All notable changes to Vibe Action will be documented in this file.
 - Add conversation history support to ollama and openai clients and prompts
 - Add Yandex and GigaChat providers, structured logging
 - Full refactoring, add support yandex, gigachat, stream, etc
-

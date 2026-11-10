@@ -13,11 +13,10 @@
 //!
 //! # Submodules
 //!
-//! - `capability` — `CapabilityRules` files: version, provider names,
-//!   capability keys, regex syntax.
-//! - `params` — connection: non-empty model; host is a valid http/https
-//!   URL (empty allowed for providers with a built-in default);
-//!   temperature/limits ranges; `api_key` required for the keyed clouds.
+//! - `capability` — `CapabilityRules` files: the file structure and
+//!   the rule entries are valid.
+//! - `params` — `Connection` and generation parameters: required
+//!   fields are set and the values are in valid ranges.
 
 use crate::error::ClusterError;
 

@@ -21,8 +21,7 @@ pub struct PromptResult {
     /// Model name that generated the response.
     pub model: String,
     /// The token and timing report of the call; `None` = the call
-    /// did not complete (cancelled, failed) or `ConnectionParams.stats`
-    /// is off.
+    /// did not complete (cancelled, failed).
     pub stats: Option<PromptStats>,
     /// Optional chain of thought from reasoning models.
     pub thinking: Option<String>,
@@ -30,4 +29,26 @@ pub struct PromptResult {
     pub text: Option<String>,
     /// Error if the prompt failed after all retries.
     pub error: Option<ClusterError>,
+}
+
+impl PromptResult {
+    /// A failed result: nothing filled except the error.
+    pub(crate) fn failed(
+        prompt: Prompt,
+        provider: Provider,
+        host: String,
+        model: String,
+        error: ClusterError,
+    ) -> Self {
+        Self {
+            prompt,
+            provider,
+            host,
+            model,
+            stats: None,
+            thinking: None,
+            text: None,
+            error: Some(error),
+        }
+    }
 }
