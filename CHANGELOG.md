@@ -1,6 +1,22 @@
 # Changelog
 
-All notable changes to Vibe Action will be documented in this file.
+All notable changes to Vibe Cluster will be documented in this file.
+
+## [0.3.0] - 2026-11-11
+
+### 🐛 Fixes
+
+- Exclude image payloads from token estimates
+
+### 📚 Documentation
+
+- Add IDEAS — a thinking backlog of possible crate extensions
+
+### 🚀 Features
+
+- Align capability rules with real provider model catalogs
+- Per-call stats report with token breakdown by prompt part and wall time
+- Add params families, provider usage token support, and the consistency pass
 
 ## [0.2.1] - 2026-11-07
 
@@ -38,3 +54,4 @@ All notable changes to Vibe Action will be documented in this file.
 - Add conversation history support to ollama and openai clients and prompts
 - Add Yandex and GigaChat providers, structured logging
 - Full refactoring, add support yandex, gigachat, stream, etc
+

@@ -4,5 +4,5 @@
 imports_granularity = "Item"
 
 # Update version:
-# Update changelog: git cliff --tag v0.2.1 -o CHANGELOG.md
-# Create tag: git tag v0.2.1 / git push --tags / cargo publish
+# Update changelog: git cliff --tag v0.3.0 -o CHANGELOG.md
+# Create tag: git tag v0.3.0 / git push --tags / cargo publish
