@@ -105,6 +105,7 @@ pub use data::Bpe;
 pub use data::CancelToken;
 pub use data::Capabilities;
 pub use data::Connection;
+pub use data::Effort;
 pub use data::GigaChatParams;
 pub use data::HistoryMessage;
 pub use data::Input;

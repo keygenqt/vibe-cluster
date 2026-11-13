@@ -95,6 +95,7 @@ impl CapabilityRules {
             abilities: Abilities {
                 tools: get(Capability::Tools),
                 thinking: get(Capability::Thinking),
+                effort: get(Capability::Effort),
                 embedding: get(Capability::Embedding),
                 decision: get(Capability::Decision),
             },
@@ -256,6 +257,7 @@ pub(crate) fn parse_capability(group: &str, key: &str) -> Option<Capability> {
         ("output", "video") => Some(Capability::OutputVideo),
         ("abilities", "tools") => Some(Capability::Tools),
         ("abilities", "thinking") => Some(Capability::Thinking),
+        ("abilities", "effort") => Some(Capability::Effort),
         ("abilities", "embedding") => Some(Capability::Embedding),
         ("abilities", "decision") => Some(Capability::Decision),
         _ => None,
@@ -279,6 +281,7 @@ pub(crate) enum Capability {
     OutputVideo,
     Tools,
     Thinking,
+    Effort,
     Embedding,
     Decision,
 }

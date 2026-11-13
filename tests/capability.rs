@@ -89,6 +89,36 @@ fn closed_world_matrix() {
     assert_eq!(caps.output.text, Some(true));
     assert_eq!(caps.abilities.tools, Some(false));
     assert_eq!(caps.abilities.decision, Some(false));
+    assert_eq!(caps.abilities.effort, Some(true));
+}
+
+#[test]
+fn effort_rules() {
+    let rules = CapabilityRules::new();
+
+    // gigachat: everyone but the lite tier reasons and takes effort
+    let caps = rules.capabilities(&Provider::GigaChat, "GigaChat-2-Lite");
+    assert_eq!(caps.abilities.effort, Some(false));
+    assert_eq!(caps.abilities.thinking, Some(false));
+    let caps = rules.capabilities(&Provider::GigaChat, "gigachat-2-pro");
+    assert_eq!(caps.abilities.effort, Some(true));
+
+    // zhipu: thinking starts with GLM-4.5, effort with GLM-5.2
+    let caps = rules.capabilities(&Provider::Zhipu, "glm-4.6");
+    assert_eq!(caps.abilities.thinking, Some(true));
+    assert_eq!(caps.abilities.effort, Some(false));
+    let caps = rules.capabilities(&Provider::Zhipu, "glm-5.3-flash");
+    assert_eq!(caps.abilities.effort, Some(true));
+
+    // openai: effort rides the reasoning models
+    let caps = rules.capabilities(&Provider::OpenAI, "gpt-4o");
+    assert_eq!(caps.abilities.effort, Some(false));
+    let caps = rules.capabilities(&Provider::OpenAI, "o3");
+    assert_eq!(caps.abilities.effort, Some(true));
+
+    // ollama: effort follows the thinking keyword tiers
+    let caps = rules.capabilities(&Provider::Ollama, "qwen3-thinking");
+    assert_eq!(caps.abilities.effort, Some(true));
 }
 
 #[test]

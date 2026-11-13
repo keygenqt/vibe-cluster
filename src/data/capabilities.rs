@@ -51,6 +51,9 @@ pub struct Abilities {
     pub tools: Option<bool>,
     /// Supports thinking (reasoning) output.
     pub thinking: Option<bool>,
+    /// Supports reasoning depth control (`reasoning_effort` /
+    /// `think` — the knob shape is the params family's business).
+    pub effort: Option<bool>,
     /// Produces embeddings instead of chat completions.
     pub embedding: Option<bool>,
     /// System One classification (Ollama `decision`).

@@ -200,6 +200,9 @@ impl OpenAiClient {
         if let Some(value) = self.params.num_predict {
             request["max_tokens"] = value.into();
         }
+        if let Some(effort) = self.params.reasoning_effort {
+            request["reasoning_effort"] = effort.as_str().into();
+        }
         if let Some(stop) = self.params.stop.as_ref() {
             if !stop.is_empty() {
                 request["stop"] = stop.clone().into();

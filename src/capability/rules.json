@@ -30,6 +30,7 @@
       "abilities": {
         "tools": { "keywords": ["qwen", "llama", "mistral", "glm"] },
         "thinking": { "keywords": ["thinking", "qwq", "r1"] },
+        "effort": { "keywords": ["thinking", "qwq", "r1"] },
         "embedding": { "keywords": ["embed", "bge"] },
         "decision": { "default": false }
       }
@@ -67,6 +68,7 @@
       },
       "abilities": {
         "thinking": { "include": ["^(o\\d|gpt-5)"] },
+        "effort": { "include": ["^(o\\d|gpt-5)"] },
         "tools": {
           "keywords": ["chatgpt", "gpt"],
           "include": ["^o[34]"],
@@ -91,6 +93,7 @@
       },
       "abilities": {
         "thinking": { "default": true },
+        "effort": { "default": false },
         "tools": { "default": true },
         "embedding": { "default": false },
         "decision": { "default": false }
@@ -135,6 +138,7 @@
           "include": ["^qwen3"],
           "exclude": ["asr", "tts", "embedding", "rerank", "s2s", "livetranslate"]
         },
+        "effort": { "default": false },
         "tools": {
           "include": ["^qwen"],
           "keywords": ["kimi", "glm", "deepseek", "minimax"],
@@ -176,6 +180,7 @@
       },
       "abilities": {
         "thinking": { "include": ["^kimi-k2\\.[5-9]"], "keywords": ["thinking"] },
+        "effort": { "default": false },
         "tools": { "keywords": ["kimi"] },
         "embedding": { "default": false },
         "decision": { "default": false }
@@ -196,6 +201,7 @@
       },
       "abilities": {
         "thinking": { "include": ["^glm-4\\.[5-9]", "^glm-5"] },
+        "effort": { "include": ["^glm-5\\.[2-9]", "^glm-[6-9]"] },
         "tools": { "keywords": ["glm"] },
         "embedding": { "keywords": ["embedding"] },
         "decision": { "default": false }
@@ -216,6 +222,7 @@
       },
       "abilities": {
         "thinking": { "include": ["^yandexgpt-5\\.1", "^yandexgpt-5-pro"] },
+        "effort": { "default": false },
         "tools": { "include": ["^yandexgpt"] },
         "embedding": { "default": false },
         "decision": { "default": false }
@@ -235,7 +242,8 @@
         "video": { "default": false }
       },
       "abilities": {
-        "thinking": { "default": false },
+        "thinking": { "default": true, "exclude": ["lite"] },
+        "effort": { "default": true, "exclude": ["lite"] },
         "tools": { "keywords": ["gigachat"] },
         "embedding": { "default": false },
         "decision": { "default": false }

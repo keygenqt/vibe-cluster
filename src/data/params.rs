@@ -7,6 +7,46 @@
 use crate::data::Bpe;
 use crate::{constants, data::Provider};
 
+/// Reasoning effort levels of `reasoning_effort` on the wire. The
+/// subset a model accepts is the caller's business (the studio
+/// catalog); unknown values are rejected by the server.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Effort {
+    Minimal,
+    Low,
+    Medium,
+    High,
+    XHigh,
+    Max,
+}
+
+impl Effort {
+    /// The wire value for `reasoning_effort`.
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            Effort::Minimal => "minimal",
+            Effort::Low => "low",
+            Effort::Medium => "medium",
+            Effort::High => "high",
+            Effort::XHigh => "xhigh",
+            Effort::Max => "max",
+        }
+    }
+
+    /// Parses the wire value; `None` = unknown — the caller drops it.
+    pub fn parse(value: &str) -> Option<Self> {
+        match value {
+            "minimal" => Some(Effort::Minimal),
+            "low" => Some(Effort::Low),
+            "medium" => Some(Effort::Medium),
+            "high" => Some(Effort::High),
+            "xhigh" => Some(Effort::XHigh),
+            "max" => Some(Effort::Max),
+            _ => None,
+        }
+    }
+}
+
 /// Generation parameters of the Ollama API (the request `options`
 /// block). `None` = not sent, the server/Modelfile default applies.
 #[derive(Debug, Clone, Default)]
@@ -27,6 +67,9 @@ pub struct OllamaParams {
     pub num_ctx: Option<usize>,
     /// Maximum tokens to generate.
     pub num_predict: Option<usize>,
+    /// Think (reasoning) toggle for thinking models; `None` = server
+    /// default applies. Non-thinking models reject the field.
+    pub think: Option<bool>,
 }
 
 /// Generation parameters of the OpenAI-compatible schema: OpenAI,
@@ -50,6 +93,9 @@ pub struct OpenAiParams {
     pub stop: Option<Vec<String>>,
     /// Maximum tokens to generate (`max_tokens` on the wire).
     pub num_predict: Option<usize>,
+    /// Reasoning depth for reasoning models (OpenAI o-series/GPT-5,
+    /// Zhipu GLM-5.2+). `None` = not sent.
+    pub reasoning_effort: Option<Effort>,
 }
 
 /// Generation parameters of the GigaChat schema. `seed` is not in the
@@ -65,6 +111,11 @@ pub struct GigaChatParams {
     pub top_p: Option<f64>,
     /// Maximum tokens to generate (`max_tokens` on the wire).
     pub num_predict: Option<usize>,
+    /// Reasoning depth; the server accepts only `low`/`medium`/`high`.
+    pub reasoning_effort: Option<Effort>,
+    /// Cap on reasoning tokens; on reaching it the model stops
+    /// thinking and answers.
+    pub reasoning_max_tokens: Option<u64>,
 }
 
 /// The generation parameters of a connection, per provider family.

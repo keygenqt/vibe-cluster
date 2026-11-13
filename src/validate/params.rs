@@ -147,6 +147,7 @@ impl ValidateTrait for Params {
                 check_f64("temperature", params.temperature, 0.0, 2.0)?;
                 check_f64("top_p", params.top_p, 0.0, 1.0)?;
                 check_zero("num_predict", params.num_predict, 0)?;
+                check_zero("reasoning_max_tokens", params.reasoning_max_tokens, 0)?;
             }
         }
         Ok(())

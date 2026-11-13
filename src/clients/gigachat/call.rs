@@ -103,6 +103,11 @@ impl GigaChatClient {
                 ClusterError::Parse("GigaChat response misses choices or message node".into())
             })?;
 
+        // Reasoning rides `reasoning_content` (v1 format) next to the answer.
+        let thinking = message_node["reasoning_content"]
+            .as_str()
+            .unwrap_or("")
+            .to_string();
         let raw = message_node["content"].as_str().unwrap_or("").to_string();
 
         let finish_reason = json["choices"]
@@ -120,7 +125,7 @@ impl GigaChatClient {
 
         let stats = parse_usage(&json["usage"]);
 
-        Ok((String::new(), raw, stats))
+        Ok((thinking, raw, stats))
     }
 
     /// Streams the response via SSE (stream=true). The OAuth token
@@ -192,7 +197,9 @@ impl GigaChatClient {
 
     /// Fills the params fields of the request body: a `None` stays
     /// out, the model default applies. The GigaChat schema has no
-    /// stop/top_k/min_p; `num_predict` goes out as `max_tokens`.
+    /// stop/top_k/min_p; `num_predict` goes out as `max_tokens`,
+    /// reasoning depth and its token cap as `reasoning_effort` /
+    /// `reasoning_max_tokens` (v1 format).
     fn apply_params(&self, request: &mut serde_json::Value) {
         if let Some(value) = self.params.temperature {
             request["temperature"] = value.into();
@@ -205,6 +212,12 @@ impl GigaChatClient {
         }
         if let Some(value) = self.params.num_predict {
             request["max_tokens"] = value.into();
+        }
+        if let Some(effort) = self.params.reasoning_effort {
+            request["reasoning_effort"] = effort.as_str().into();
+        }
+        if let Some(value) = self.params.reasoning_max_tokens {
+            request["reasoning_max_tokens"] = value.into();
         }
     }
 

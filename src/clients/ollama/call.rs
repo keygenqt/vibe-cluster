@@ -203,6 +203,12 @@ impl OllamaClient {
             "options": self.params_options(),
         });
 
+        // `think` sits at the request root, outside `options`; non-thinking
+        // models reject the field.
+        if let Some(think) = self.params.think {
+            request["think"] = think.into();
+        }
+
         if let Some(system) = &prompt.system {
             request["system"] = serde_json::Value::String(system.to_string());
         }
@@ -250,12 +256,20 @@ impl OllamaClient {
         }
         messages.push(last);
 
-        serde_json::json!({
+        let mut request = serde_json::json!({
             "model": self.model,
             "messages": messages,
             "stream": stream,
             "options": self.params_options(),
-        })
+        });
+
+        // `think` sits at the request root, outside `options`; non-thinking
+        // models reject the field.
+        if let Some(think) = self.params.think {
+            request["think"] = think.into();
+        }
+
+        request
     }
 
     /// Builds the request `options` block from the generation

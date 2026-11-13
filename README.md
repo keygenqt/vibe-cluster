@@ -13,10 +13,11 @@ One API, multiple providers, zero coordination overhead.
 ## What it does
 
 - Distributes prompts across multiple LLM providers (local and cloud)
-- Supports Ollama, OpenAI-compatible APIs (DeepSeek, Qwen, Moonshot, Zhipu, Yandex) and GigaChat (OAuth token + OpenAI-compatible)
+- Supports Ollama, OpenAI-compatible APIs (DeepSeek, Qwen, Moonshot, Zhipu, Yandex) and GigaChat
 - Model capabilities — what each model accepts, produces, and can do, as a structured matrix
-- Capability rules shipped built-in and user-extensible: adjust or replace detection at runtime with your own rules, no crate release needed
-- Usage stats per call: input / cached / output / thinking tokens exactly as the provider reports them, plus wall time; missing counts can be filled with an optional BPE estimator (`Connection.bpe`)
+- Capability rules built-in and user-extensible at runtime — no crate release needed
+- Reasoning effort control: `reasoning_effort` (OpenAI-compatible, GigaChat), `think` (Ollama)
+- Usage stats per call: tokens as the provider reports them, wall time; gaps filled by an optional BPE estimator (`Connection.bpe`)
 - Parallel execution with automatic worker distribution
 - Per-prompt results with provider info, timing, and error details
 - Automatic retry on network errors and server failures (5xx)

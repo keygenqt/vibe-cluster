@@ -39,6 +39,7 @@ pub use model_info::ModelInfo;
 pub use options::BatchOptions;
 pub use options::ModelFilter;
 pub use params::Connection;
+pub use params::Effort;
 pub use params::GigaChatParams;
 pub use params::OllamaParams;
 pub use params::OpenAiParams;

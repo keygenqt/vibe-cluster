@@ -53,6 +53,9 @@ impl OllamaClient {
             abilities: Abilities {
                 tools: has("tools"),
                 thinking: has("thinking"),
+                // the think knob pairs with the thinking capability:
+                // a model the server reports as thinking accepts `think`
+                effort: has("thinking"),
                 embedding: has("embedding"),
                 decision: has("decision"),
             },
@@ -97,6 +100,10 @@ impl OllamaClient {
         fill(
             &mut capabilities.abilities.thinking,
             fallback.abilities.thinking,
+        );
+        fill(
+            &mut capabilities.abilities.effort,
+            fallback.abilities.effort,
         );
         fill(
             &mut capabilities.abilities.embedding,
